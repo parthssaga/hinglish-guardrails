@@ -99,7 +99,13 @@ class JailbreakGuardrail(BaseGuardrail):
             self._tokenizer = AutoTokenizer.from_pretrained(name)
             self._model = AutoModelForSequenceClassification.from_pretrained(name)
             self._model.to(self._device).eval()
-            self._has_head = self._model.config.num_labels >= 2
+            # Only trust the neural head when the checkpoint was fine-tuned
+            # (id2label has meaningful labels, not generic LABEL_0/LABEL_1).
+            labels = list(self._model.config.id2label.values())
+            self._has_head = (
+                self._model.config.num_labels >= 2
+                and not all(l.startswith("LABEL_") for l in labels)
+            )
         except Exception:
             self._model = None
         self._ready = True
@@ -121,7 +127,14 @@ class JailbreakGuardrail(BaseGuardrail):
         with torch.no_grad():
             logits = self._model(**inputs).logits
         probs = torch.softmax(logits, dim=-1)[0]
-        return float(probs[-1])  # label 1 == jailbreak
+        # Find the label index named "jailbreak" in the fine-tuned head;
+        # fall back to the last index for 2-class or unknown checkpoints.
+        jailbreak_idx = -1
+        for idx, lbl in self._model.config.id2label.items():
+            if "jailbreak" in lbl.lower():
+                jailbreak_idx = int(idx)
+                break
+        return float(probs[jailbreak_idx])
 
     @staticmethod
     def _pattern_score(text: str):

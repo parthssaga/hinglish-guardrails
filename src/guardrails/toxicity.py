@@ -130,8 +130,14 @@ class ToxicityGuardrail(BaseGuardrail):
         with torch.no_grad():
             logits = self._model(**inputs).logits
         probs = torch.softmax(logits, dim=-1)[0]
-        # Convention: label index 1 == toxic.
-        return float(probs[-1])
+        # Find the label index named "toxic" in the fine-tuned head;
+        # fall back to the last index for 2-class or unknown checkpoints.
+        toxic_idx = -1
+        for idx, lbl in self._model.config.id2label.items():
+            if "toxic" in lbl.lower():
+                toxic_idx = int(idx)
+                break
+        return float(probs[toxic_idx])
 
     @staticmethod
     def _wordlist_score(text: str) -> float:

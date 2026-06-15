@@ -1,0 +1,18 @@
+# secrets
+.env
+
+# database
+*.db
+
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# os
+.DS_Store
+
+# model cache (if downloaded locally)
+*.bin
+*.safetensors

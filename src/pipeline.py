@@ -110,7 +110,33 @@ class GuardrailPipeline:
 
         return results, flagged_by
 
-    # -- public entry ------------------------------------------------------
+    # -- public entry (guardrails only, no LLM) ---------------------------
+    def check_input(self, text: str) -> dict:
+        """Run input guardrails only; skip the LLM.  Does not write to the log.
+
+        Returns the same shape as ``process()`` but without ``response`` or
+        ``output_results``.  Used by the REST API ``POST /check`` endpoint.
+        """
+        t0 = time.perf_counter()
+        if self.config.enable_language_id:
+            language, lang_conf = self.lang_id.identify(text)
+        else:
+            language, lang_conf = "unknown", 0.0
+
+        input_results, _, blocked_by = self._run_input_guardrails(
+            text, language=language
+        )
+        total_ms = (time.perf_counter() - t0) * 1000
+        return {
+            "language": language,
+            "lang_conf": round(lang_conf, 3),
+            "blocked": blocked_by is not None,
+            "blocked_by": blocked_by,
+            "input_results": [r.as_dict() for r in input_results],
+            "total_ms": round(total_ms, 1),
+        }
+
+    # -- public entry (full pipeline) --------------------------------------
     def process(self, user_message: str, conversation_id: str | None = None,
                 history: list[dict] | None = None) -> dict:
         t0 = time.perf_counter()

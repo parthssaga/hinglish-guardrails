@@ -1,0 +1,21 @@
+# Core
+ollama>=0.3.0
+streamlit>=1.35.0
+pandas>=2.0.0
+
+# ML / NLP
+torch>=2.0.0
+transformers>=4.40.0
+sentencepiece>=0.2.0          # tokenizer backend for MuRIL / IndicNER
+protobuf>=4.0.0
+
+# Hinglish transliteration (Roman -> Devanagari)
+indic-transliteration>=2.3.0
+
+# PII (English structured + base recognizers)
+presidio-analyzer>=2.2.0
+presidio-anonymizer>=2.2.0
+
+# Optional: spaCy English model is pulled by presidio on first run.
+# If presidio complains about a missing model, run:
+#   python -m spacy download en_core_web_lg
