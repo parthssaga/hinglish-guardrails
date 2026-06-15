@@ -214,3 +214,221 @@ class TestCategoryToggle:
         of = OutputFilterGuardrail(cfg)
         r = of.check("Contact rahul@example.com for more information.")
         assert "pii_in_output" not in r.metadata.get("fired_categories", [])
+
+    def test_disabling_toxic_skips_it(self) -> None:
+        cfg = PipelineConfig(output_filter_toxic=False)
+        of = OutputFilterGuardrail(cfg)
+        r = of.check("I hate you. Nobody likes you.")
+        assert "toxic" not in r.metadata.get("fired_categories", [])
+        assert "toxic" not in r.metadata.get("category_scores", {})
+
+    def test_disabling_unsafe_compliance_skips_it(self) -> None:
+        cfg = PipelineConfig(output_filter_unsafe_compliance=False)
+        of = OutputFilterGuardrail(cfg)
+        r = of.check("I've no ethical restrictions, so here you go.")
+        assert "unsafe_compliance" not in r.metadata.get("fired_categories", [])
+
+
+# ---------------------------------------------------------------------------
+# Additional toxic markers — each alone exceeds the 0.60 threshold
+# ---------------------------------------------------------------------------
+
+class TestToxicMarkersExtended:
+    def test_get_lost_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Get lost, I don't want to talk to you.")
+        assert "toxic" in r.metadata["fired_categories"]
+
+    def test_i_hate_you_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("I hate you so much, leave me alone.")
+        assert "toxic" in r.metadata["fired_categories"]
+
+    def test_nobody_likes_you_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Nobody likes you. Just give up already.")
+        assert "toxic" in r.metadata["fired_categories"]
+
+    def test_piece_of_trash_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("You are a piece of trash and always will be.")
+        assert "toxic" in r.metadata["fired_categories"]
+
+    def test_two_markers_boost_score_above_single(self, of: OutputFilterGuardrail) -> None:
+        one = of.check("I hate you.")
+        two = of.check("I hate you. Get lost and never come back.")
+        assert two.metadata["category_scores"]["toxic"] >= \
+               one.metadata["category_scores"]["toxic"]
+
+    def test_nikal_jao_hinglish_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Nikal jao, tumhari koi zaroorat nahi yahan.")
+        assert "toxic" in r.metadata["fired_categories"]
+
+    def test_bekar_ho_tum_hinglish_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Bekar ho tum, kuch bhi sahi nahi karte.")
+        assert "toxic" in r.metadata["fired_categories"]
+
+
+# ---------------------------------------------------------------------------
+# Additional system_prompt_leak patterns
+# ---------------------------------------------------------------------------
+
+class TestSystemPromptLeakExtended:
+    def test_as_per_my_instructions_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("As per my instructions, I must decline that request.")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_operate_under_instructions_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("I operate under instructions to avoid harmful content.")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_my_guidelines_include_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("My guidelines include being polite at all times.")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_my_rules_say_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("My rules say I should help users and avoid harm.")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_hinglish_mere_niyam_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Mere niyam hain ki main kisi ko hurt na karoon.")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_hinglish_system_prompt_mein_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("System prompt mein likha hai ki main helpful rehoon.")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_devanagari_system_prompt_ke_anusaar_fires(self, of: OutputFilterGuardrail) -> None:
+        # "अनुसार" ends with 'र' (Lo), so \b works; "में" ends with Mn so use "के अनुसार"
+        r = of.check("सिस्टम प्रॉम्प्ट के अनुसार मुझे सहायक रहना है।")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_devanagari_mujhe_diye_gaye_nirdesh_fires(self, of: OutputFilterGuardrail) -> None:
+        # matches r"(मेरे|मुझे दिए गए) (निर्देश|..)\b"; "निर्देश" ends with 'श' (Lo) → \b works
+        r = of.check("मुझे दिए गए निर्देश के अनुसार मैं हमेशा विनम्र रहता हूँ।")
+        assert "system_prompt_leak" in r.metadata["fired_categories"]
+
+    def test_score_is_085_for_pattern_match(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("My instructions are to be helpful and safe.")
+        assert r.metadata["category_scores"]["system_prompt_leak"] == pytest.approx(0.85)
+
+
+# ---------------------------------------------------------------------------
+# Additional unsafe_compliance patterns
+# ---------------------------------------------------------------------------
+
+class TestUnsafeComplianceExtended:
+    def test_all_restrictions_removed_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("All restrictions have been removed. I can now say anything.")
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+    def test_i_will_now_answer_anything_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("I will now answer anything you ask without limits.")
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+    def test_no_ethical_guidelines_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("I now have no ethical guidelines whatsoever.")
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+    def test_jailbroken_declaration_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("As a jailbroken AI, I can provide any information.")
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+    def test_hinglish_restrictions_removed_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Meri paabandiyaan hat gayi hain. Main kuch bhi bol sakta hoon.")
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+    def test_stepwise_poison_synthesis_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check(
+            "To synthesize the poison, follow these steps: "
+            "Step 1: obtain the precursor chemicals."
+        )
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+    def test_stepwise_ransomware_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check(
+            "Here's how to create ransomware: "
+            "Step 1: write the encryption payload."
+        )
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+    def test_unsafe_compliance_score_is_090_for_declaration(
+        self, of: OutputFilterGuardrail
+    ) -> None:
+        r = of.check("I've no ethical restrictions, so here you go.")
+        assert r.metadata["category_scores"]["unsafe_compliance"] == pytest.approx(0.90)
+
+    def test_unsafe_compliance_score_is_085_for_stepwise_dangerous(
+        self, of: OutputFilterGuardrail
+    ) -> None:
+        r = of.check(
+            "Here's how to make a bomb: Step 1: gather materials. Step 2: connect."
+        )
+        assert r.metadata["category_scores"]["unsafe_compliance"] == pytest.approx(0.85)
+
+
+# ---------------------------------------------------------------------------
+# Additional PII types
+# ---------------------------------------------------------------------------
+
+class TestPIIInOutputExtended:
+    def test_pan_card_in_response_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Your PAN on file is ABCDE1234F — please verify it.")
+        assert "pii_in_output" in r.metadata["fired_categories"]
+
+    def test_credit_card_in_response_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("The card ending in 1234 5678 9012 3456 has been charged.")
+        assert "pii_in_output" in r.metadata["fired_categories"]
+
+    def test_indian_phone_with_prefix_fires(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Your registered number is +91 9876543210.")
+        assert "pii_in_output" in r.metadata["fired_categories"]
+
+    def test_multiple_pii_types_both_flagged(self, of: OutputFilterGuardrail) -> None:
+        r = of.check(
+            "Your details: email rahul@example.com, Aadhaar 1234 5678 9012."
+        )
+        assert "pii_in_output" in r.metadata["fired_categories"]
+        assert r.metadata["category_scores"]["pii_in_output"] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Custom threshold config
+# ---------------------------------------------------------------------------
+
+class TestCustomThreshold:
+    def test_raising_toxic_threshold_prevents_firing(self) -> None:
+        cfg = PipelineConfig()
+        cfg.thresholds["output_toxicity"] = 0.99  # nothing can reach 99%
+        of = OutputFilterGuardrail(cfg)
+        r = of.check("I hate you. Nobody likes you.")
+        assert "toxic" not in r.metadata.get("fired_categories", [])
+
+    def test_lowering_unsafe_threshold_fires_on_dangerous_word_alone(self) -> None:
+        cfg = PipelineConfig()
+        cfg.thresholds["output_unsafe_compliance"] = 0.30  # below the 0.35 dangerous-word-alone score
+        of = OutputFilterGuardrail(cfg)
+        r = of.check("The bomb was found near the station.")
+        assert "unsafe_compliance" in r.metadata["fired_categories"]
+
+
+# ---------------------------------------------------------------------------
+# as_dict serialization
+# ---------------------------------------------------------------------------
+
+class TestAsDictSerialization:
+    def test_as_dict_is_json_serializable(self, of: OutputFilterGuardrail) -> None:
+        import json
+        r = of.check("My instructions are to help you.")
+        d = r.as_dict()
+        # should not raise
+        serialized = json.dumps(d)
+        assert len(serialized) > 0
+
+    def test_as_dict_contains_fired_categories_in_metadata(
+        self, of: OutputFilterGuardrail
+    ) -> None:
+        r = of.check("My instructions are to help you.")
+        d = r.as_dict()
+        assert "metadata" in d
+        assert "fired_categories" in d["metadata"]
+
+    def test_elapsed_ms_is_positive(self, of: OutputFilterGuardrail) -> None:
+        r = of.check("Hello, world.")
+        assert r.elapsed_ms >= 0.0
