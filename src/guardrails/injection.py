@@ -116,18 +116,53 @@ class InjectionGuardrail(BaseGuardrail):
             return score
         return 1.0 - score  # model says benign -> low injection prob
 
-    def _check(self, text: str) -> GuardrailResult:
+    def check(self, text: str, language: str | None = None) -> GuardrailResult:
+        """Public entry point; accepts an optional language hint.
+
+        When language is 'hi' (pure Devanagari), the DeBERTa neural scorer is
+        skipped entirely. DeBERTa was fine-tuned on English injection data only:
+        its low-confidence benign predictions on Devanagari text invert to false
+        injection scores via `1.0 - score`, flooding Hindi safe prompts with FPs.
+        The Devanagari rule patterns cover real Hindi injection attempts instead.
+        For 'en' and 'hinglish' the existing behaviour (rules + DeBERTa, take
+        max) is preserved.
+        """
+        import time
+        start = time.perf_counter()
+        try:
+            if not self._ready:
+                self.load()
+            result = self._check(text, language=language)
+        except Exception as exc:  # noqa: BLE001
+            result = GuardrailResult(
+                name=self.name,
+                triggered=False,
+                score=0.0,
+                reason=f"guardrail error (fell through): {exc}",
+                metadata={"error": str(exc)},
+            )
+        result.elapsed_ms = (time.perf_counter() - start) * 1000
+        return result
+
+    def _check(self, text: str, language: str | None = None) -> GuardrailResult:
         threshold = self.config.thresholds["injection"]
 
         rule_score, matched = self._rule_score(text)
         neural_score = 0.0
         backend = "rules-only"
-        if self._clf is not None:
+
+        # DeBERTa is English-only; skip it for pure Hindi/Devanagari to avoid
+        # the false-positive pattern where low benign confidence inverts to a
+        # high injection score.
+        use_neural = language != "hi" and self._clf is not None
+        if use_neural:
             try:
                 neural_score = self._neural_score(text)
                 backend = "deberta+rules"
             except Exception:
                 backend = "rules-only(neural-failed)"
+        elif language == "hi":
+            backend = "rules-only(hi)"
 
         score = max(rule_score, neural_score)
         triggered = score >= threshold
