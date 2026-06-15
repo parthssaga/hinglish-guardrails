@@ -14,7 +14,7 @@ A production-ready safety guardrail pipeline for LLM chatbots that handles
 |---|---|
 | **Multilingual NLP** | Language detection + transliteration for EN / Hinglish / Devanagari |
 | **Six-layer safety pipeline** | PII redaction → toxicity → injection → jailbreak → output filter → hallucination |
-| **900-prompt benchmark** | Synthetic + semi-real evaluation set across 3 languages and 5 attack categories |
+| **Dual benchmark suite** | 900-prompt input benchmark + 750-item output benchmark across 3 languages |
 | **REST API** | FastAPI service (`POST /check`, `POST /chat`, `GET /stats`, `GET /health`) |
 | **Streamlit UI** | ChatGPT-style chat interface with live monitoring dashboard |
 | **Dockerized** | Single `docker run` to start the full app |
@@ -36,8 +36,8 @@ For every user message the pipeline:
    - **Jailbreak** — role-play / hypothetical frame patterns + MuRIL head
 3. Blocked messages are **logged and refused**; clean messages go to the LLM.
 4. Runs **two output-side guardrails** on the reply:
-   - **Harmful-output filter** — DistilBERT toxicity screen on model output
-   - **Hallucination flag** — token log-probability confidence signal
+   - **Harmful-output filter** — four independently-scored categories (toxic, system-prompt leak, unsafe compliance, PII); DistilBERT + wordlist/regex
+   - **Hallucination flag** — four-signal composite (hedge density, numeric overconfidence, self-contradiction, temporal overreach) + optional grounding check via sentence-transformer cosine similarity
 5. **Logs the full trace** to SQLite; surfaced in the dashboard.
 
 Each guardrail has a **neural primary path** and a **rule-based fallback** —
@@ -60,7 +60,7 @@ User input (EN / Hinglish / Hindi)
    Local LLM via Ollama (llama3.2 / qwen2.5)
         │
    OUTPUT GUARDRAILS
-     Harmful-output filter ─▶ Hallucination flag
+     Harmful-output filter (4 categories) ─▶ Hallucination / Grounding check
         │
    SQLite log ──▶ Streamlit dashboard / REST API /stats
         │
@@ -75,9 +75,10 @@ User input (EN / Hinglish / Hindi)
 hinglish-guardrails/
 ├── app.py                 Streamlit chat + monitoring dashboard
 ├── api.py                 FastAPI REST service (POST /check, /chat, GET /stats, /health)
-├── evaluate.py            Offline evaluation harness (no LLM needed)
+├── evaluate.py            Offline evaluation harness (--output-mode for output guardrails)
 ├── analyze_logs.py        CLI log inspector (--all, --csv, --db)
-├── build_benchmark.py     900-prompt benchmark generator
+├── build_benchmark.py     900-prompt input benchmark generator
+├── build_output_benchmark.py  750-item output benchmark generator
 ├── config.py              Models, thresholds, module toggles
 ├── Dockerfile             Single-container deployment
 ├── requirements.txt       Runtime Python deps
@@ -115,8 +116,12 @@ hinglish-guardrails/
 │   ├── test_jailbreak.py
 │   ├── test_pii.py
 │   ├── test_api.py
-│   └── test_pipeline.py
-└── benchmark_900.json     900-prompt benchmark (committed, reproducible)
+│   ├── test_pipeline.py
+│   ├── test_output_filter.py
+│   ├── test_hallucination.py
+│   └── test_output_eval.py
+├── benchmark_900.json     900-prompt input benchmark (committed, reproducible)
+└── output_benchmark.json  750-item output benchmark (committed, reproducible)
 ```
 
 ---
@@ -208,8 +213,12 @@ pytest tests/ -v
 # Seed set (43 prompts, fast)
 python evaluate.py
 
-# 900-prompt benchmark
+# 900-prompt input benchmark
 python evaluate.py --data benchmark_900.json
+
+# 750-item output benchmark (no LLM or Ollama needed)
+python evaluate.py --output-mode
+python evaluate.py --output-mode --output-data output_benchmark.json
 
 # Inspect logs
 python analyze_logs.py
@@ -234,10 +243,16 @@ See `training/README.md` for DGX A100 instructions and expected runtimes.
 
 ---
 
-## Benchmark results (900 prompts, rule-based + fine-tuned MuRIL)
+## Benchmark results
+
+### Input-side guardrails (900 prompts)
 
 Evaluation set: 900 prompts — 100 safe + 50 each of toxic / PII / injection /
 jailbreak per language (English, Hinglish, Hindi).
+
+```
+python evaluate.py --data benchmark_900.json
+```
 
 | Metric | English | Hinglish | Hindi | Overall |
 |--------|:-------:|:--------:|:-----:|:-------:|
@@ -260,6 +275,46 @@ Per-category accuracy:
 > model is English-only and is gated off for Devanagari text to prevent false
 > positives. Hindi injection/jailbreak detection relies on rule patterns only
 > until the MuRIL fine-tuned head is integrated end-to-end.
+
+---
+
+### Output-side guardrails (750 labeled model responses)
+
+Evaluation set: 750 responses — 50 each of safe / toxic / system\_prompt\_leak /
+unsafe\_compliance / pii\_in\_output per language (English, Hinglish, Hindi).
+Run entirely rule-based without requiring any LLM or Ollama instance.
+
+```
+python evaluate.py --output-mode --output-data output_benchmark.json
+```
+
+**Per-category (positive class = category fires):**
+
+| Category | Precision | Recall | F1 |
+|----------|:---------:|:------:|:--:|
+| toxic | 0.95 | 0.93 | **0.94** |
+| system\_prompt\_leak | 1.00 | 0.61 | **0.76** |
+| unsafe\_compliance | 1.00 | 0.41 | **0.58** |
+| pii\_in\_output | 0.80 | 1.00 | **0.89** |
+
+**Per-language item-level accuracy:**
+
+| Language | Accuracy |
+|----------|:--------:|
+| English | **95.2%** |
+| Hinglish | ~75% |
+| Hindi | 66.0% |
+
+**Grounding check** (`POST /check_grounded`): requires
+`paraphrase-multilingual-MiniLM-L12-v2`; evaluated separately on 80
+(response, source) triples — see `output_benchmark.json → grounding_items`.
+
+> **Coverage gaps:** The system\_prompt\_leak and unsafe\_compliance recall gaps
+> in Hindi are expected — the detection patterns are English/Hinglish-primary.
+> The Devanagari step-by-step instruction patterns (e.g. "चरण 1:") are not yet
+> in `_INSTRUCTION_PATTERNS`. The PII false-positive rate (P=0.80) comes from
+> the PII guardrail triggering on capitalized name sequences in some
+> non-PII responses.
 
 ---
 
@@ -290,7 +345,8 @@ Per-category accuracy:
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push:
 
 1. **Syntax check** — `python -m py_compile` on all modules
-2. **pytest** — 90 tests covering all guardrails, the full pipeline, and the REST API
-3. **Benchmark** — `evaluate.py` on the seed set (always) and 900-prompt set (main branch / PR)
+2. **pytest** — 220+ tests covering all guardrails, pipeline, REST API, and evaluation harness
+3. **Input benchmark** — `evaluate.py --data benchmark_900.json` (900 prompts, main branch / PR)
+4. **Output benchmark** — `evaluate.py --output-mode` (750 labeled responses, main branch / PR)
 
 HuggingFace models are cached between runs to keep the pipeline fast.
