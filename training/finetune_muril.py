@@ -9,19 +9,23 @@ Label schema:
 Inputs: train.csv, val.csv, test.csv produced by prepare_data.py
 Output: models/muril-guardrail/ (HuggingFace-format checkpoint)
 
+Key training features:
+  - Balanced class weights (CrossEntropyLoss with per-class weight) to handle
+    any remaining label imbalance after data expansion.
+  - Early stopping on val macro-F1 with patience=3 (stops before overfitting).
+  - eval_strategy="epoch" so per-epoch accuracy / F1 are logged to stdout.
+
 Usage (M3 Mac, smoke test):
     python training/finetune_muril.py \\
-        --train data/training/train.csv \\
-        --val   data/training/val.csv   \\
-        --test  data/training/test.csv  \\
-        --epochs 1 --batch-size 8 --lr 2e-5 --max-length 128
+        --epochs 1 --batch-size 8 --max-length 128
 
-Usage (DGX A100, full run):
+Usage (full run, default):
     python training/finetune_muril.py \\
-        --train data/training/train.csv \\
-        --val   data/training/val.csv   \\
-        --test  data/training/test.csv  \\
-        --epochs 5 --batch-size 32 --lr 2e-5 --max-length 256
+        --epochs 10 --batch-size 16 --max-length 128
+
+Usage (DGX A100):
+    python training/finetune_muril.py \\
+        --epochs 10 --batch-size 32 --lr 2e-5 --max-length 256
 """
 
 from __future__ import annotations
@@ -103,6 +107,43 @@ def _compute_metrics(eval_pred):
 
 
 # ---------------------------------------------------------------------------
+# Weighted-loss Trainer (class_weight="balanced")
+# ---------------------------------------------------------------------------
+
+class _WeightedLossTrainer:
+    """Mixin that replaces compute_loss with balanced-class CrossEntropyLoss."""
+
+    # Populated by train() before the Trainer is constructed.
+    _class_weights: torch.Tensor | None = None
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        from transformers import Trainer  # noqa: F401 (imported for super())
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+        weight = (
+            self._class_weights.to(logits.device)
+            if self._class_weights is not None
+            else None
+        )
+        loss = torch.nn.CrossEntropyLoss(weight=weight)(
+            logits.view(-1, self.model.config.num_labels),
+            labels.view(-1),
+        )
+        return (loss, outputs) if return_outputs else loss
+
+
+def _make_weighted_trainer(base_trainer_cls, class_weights: torch.Tensor):
+    """Return a Trainer subclass that uses balanced CrossEntropyLoss."""
+
+    class WeightedTrainer(_WeightedLossTrainer, base_trainer_cls):
+        pass
+
+    WeightedTrainer._class_weights = class_weights
+    return WeightedTrainer
+
+
+# ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 
@@ -115,6 +156,7 @@ def train(args: argparse.Namespace):
         EarlyStoppingCallback,
     )
     from sklearn.metrics import classification_report  # type: ignore
+    from sklearn.utils.class_weight import compute_class_weight  # type: ignore
 
     device = _pick_device()
     print(f"Device: {device}")
@@ -128,8 +170,6 @@ def train(args: argparse.Namespace):
         label2id=LABEL2ID,
         ignore_mismatched_sizes=True,
     )
-
-    # Move model to device manually (Trainer will also do this, but explicit is clearer)
     model.to(device)
 
     # Load data
@@ -138,6 +178,20 @@ def train(args: argparse.Namespace):
     val_texts,   val_labels   = _load_csv(args.val)
     test_texts,  test_labels  = _load_csv(args.test)
     print(f"  train={len(train_texts)}, val={len(val_texts)}, test={len(test_texts)}")
+
+    label_counts = {lbl: train_labels.count(lbl) for lbl in range(3)}
+    print(f"  train label distribution: safe={label_counts[0]}, "
+          f"toxic={label_counts[1]}, jailbreak={label_counts[2]}")
+
+    # Compute balanced class weights
+    class_weights_arr = compute_class_weight(
+        class_weight="balanced",
+        classes=np.array([0, 1, 2]),
+        y=np.array(train_labels),
+    )
+    class_weights = torch.tensor(class_weights_arr, dtype=torch.float)
+    print(f"  class weights (balanced): safe={class_weights[0]:.3f}, "
+          f"toxic={class_weights[1]:.3f}, jailbreak={class_weights[2]:.3f}")
 
     # Tokenise
     print(f"Tokenising (max_length={args.max_length})...")
@@ -152,7 +206,6 @@ def train(args: argparse.Namespace):
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # fp16 only on CUDA — MPS and CPU don't support it
     use_fp16 = (device == "cuda")
 
     training_args = TrainingArguments(
@@ -169,21 +222,36 @@ def train(args: argparse.Namespace):
         metric_for_best_model="f1_macro",
         greater_is_better=True,
         fp16=use_fp16,
-        logging_steps=10,
-        report_to="none",   # no wandb / tensorboard unless user sets up
+        logging_steps=20,
+        report_to="none",
         dataloader_pin_memory=(device == "cuda"),
     )
 
-    trainer = Trainer(
+    WeightedTrainer = _make_weighted_trainer(Trainer, class_weights)
+
+    trainer = WeightedTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
         compute_metrics=_compute_metrics,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience)],
     )
 
-    print(f"\nFine-tuning for {args.epochs} epoch(s)...")
+    print(f"\nFine-tuning for up to {args.epochs} epoch(s) "
+          f"(early stopping patience={args.early_stopping_patience})...")
+    print("-" * 60)
     trainer.train()
+
+    # Print clean per-epoch summary from trainer log history
+    print("\n--- Epoch-by-epoch evaluation ---")
+    print(f"{'Epoch':>6}  {'Val Acc':>8}  {'Val F1':>8}")
+    print("-" * 30)
+    for entry in trainer.state.log_history:
+        if "eval_accuracy" in entry:
+            print(f"{entry.get('epoch', '?'):>6.1f}  "
+                  f"{entry['eval_accuracy']:>8.4f}  "
+                  f"{entry.get('eval_f1_macro', 0.0):>8.4f}")
 
     # Final test evaluation
     print("\n--- Test set evaluation ---")
@@ -211,17 +279,16 @@ def train(args: argparse.Namespace):
 
 def main():
     ap = argparse.ArgumentParser(description="Fine-tune MuRIL for Hinglish guardrails")
-    ap.add_argument("--base-model", default="google/muril-base-cased",
-                    help="HuggingFace model ID or local path to start from")
+    ap.add_argument("--base-model", default="google/muril-base-cased")
     ap.add_argument("--train",  default="data/training/train.csv")
     ap.add_argument("--val",    default="data/training/val.csv")
     ap.add_argument("--test",   default="data/training/test.csv")
-    ap.add_argument("--epochs",     type=int,   default=3)
+    ap.add_argument("--epochs",     type=int,   default=10)
     ap.add_argument("--batch-size", type=int,   default=16)
     ap.add_argument("--lr",         type=float, default=2e-5)
     ap.add_argument("--max-length", type=int,   default=128)
-    ap.add_argument("--output", default="models/muril-guardrail",
-                    help="directory to save the fine-tuned checkpoint")
+    ap.add_argument("--early-stopping-patience", type=int, default=3)
+    ap.add_argument("--output", default="models/muril-guardrail")
     args = ap.parse_args()
 
     for p in (args.train, args.val, args.test):
