@@ -13,6 +13,11 @@ venv/
 # os
 .DS_Store
 
+# fine-tuned model checkpoints (too large for git; regenerate with training/finetune_muril.py)
+models/
+
 # model cache (if downloaded locally)
 *.bin
 *.safetensors
+*.pt
+*.pth
