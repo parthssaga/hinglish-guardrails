@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install runtime dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Cache HuggingFace models so subsequent runs skip the download.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: hf-${{ runner.os }}-
+
+      - name: Syntax-check all modules
+        run: |
+          python -m py_compile config.py api.py evaluate.py analyze_logs.py
+          python -m py_compile src/pipeline.py
+          python -m py_compile src/guardrails/toxicity.py src/guardrails/injection.py
+          python -m py_compile src/guardrails/jailbreak.py src/guardrails/pii.py
+          python -m py_compile training/prepare_data.py training/finetune_muril.py
+
+      - name: Run pytest
+        run: pytest tests/ -v --tb=short
+
+  benchmark:
+    name: Benchmark evaluation
+    runs-on: ubuntu-latest
+    # Run benchmark on pushes to main only to save CI minutes
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install runtime dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: hf-${{ runner.os }}-
+
+      - name: Run benchmark (seed evaluation set, rule-based paths)
+        run: python evaluate.py --data data/test_prompts.json
+
+      - name: Run 900-prompt benchmark
+        run: python evaluate.py --data benchmark_900.json
+        continue-on-error: true   # models may not load fully in CI; rule-based baseline still reported
