@@ -294,3 +294,106 @@ class TestCheckGrounded:
         assert r.metadata["sentences"][1]["supported"] is False
         assert r.metadata["unsupported_count"] == 1
         assert r.metadata["total_sentences"] == 2
+
+    def test_score_equals_one_minus_mean_max_similarity(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # resp[0] sim source = 1.0, resp[1] sim source = 0.5
+        # mean_max_sim = (1.0 + 0.5) / 2 = 0.75 → score = 0.25
+        hallucination._embedder = _mock_embedder(np.array([
+            [1.0, 0.0],        # response sentence 0 — perfectly aligned
+            [0.5, 0.866025],   # response sentence 1 — 60° angle, sim ≈ 0.5
+            [1.0, 0.0],        # source sentence
+        ]))
+        hallucination._ready = True
+        r = hallucination.check_grounded(
+            "Paris is in France. London is the capital of Germany.",
+            "Paris is the capital of France.",
+        )
+        assert r.score == pytest.approx(0.25, abs=0.01)
+        assert r.metadata["mean_max_similarity"] == pytest.approx(0.75, abs=0.01)
+
+    def test_custom_threshold_from_config_respected(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # Set high threshold (0.80) — a sim of 0.707 (45° vectors) should be unsupported
+        hallucination.config.thresholds["hallucination_grounding"] = 0.80
+        hallucination._embedder = _mock_embedder(np.array([
+            [0.707, 0.707],  # response sentence — 45° from source
+            [1.0, 0.0],      # source sentence
+        ]))
+        hallucination._ready = True
+        r = hallucination.check_grounded("A claim.", "A source sentence.")
+        # sim ≈ 0.707 < 0.80 threshold → unsupported
+        assert r.metadata["sentences"][0]["supported"] is False
+        assert r.triggered
+
+    def test_default_threshold_accepts_moderately_similar(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # Default threshold = 0.35; sim of 0.707 should be supported
+        hallucination._embedder = _mock_embedder(np.array([
+            [0.707, 0.707],  # response sentence
+            [1.0, 0.0],      # source sentence
+        ]))
+        hallucination._ready = True
+        r = hallucination.check_grounded("A claim.", "A source sentence.")
+        assert r.metadata["sentences"][0]["supported"] is True
+        assert not r.triggered
+
+    def test_unsupported_fraction_correct_for_partial(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # 1 of 2 sentences unsupported → fraction = 0.5
+        hallucination._embedder = _mock_embedder(np.array([
+            [1.0, 0.0],   # resp0 — supported
+            [0.0, 1.0],   # resp1 — not supported (orthogonal)
+            [1.0, 0.0],   # source
+        ]))
+        hallucination._ready = True
+        r = hallucination.check_grounded(
+            "First claim. Second claim.",
+            "Source text.",
+        )
+        assert r.metadata["unsupported_fraction"] == pytest.approx(0.5)
+
+    def test_no_sentences_in_response_returns_clean(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # Empty string → resp_sents = [] → early exit
+        hallucination._embedder = _mock_embedder(np.array([[1.0, 0.0]]))
+        hallucination._ready = True
+        r = hallucination.check_grounded("", "There is a source sentence.")
+        assert not r.triggered
+        assert r.reason == "grounded check: no sentences to compare"
+
+    def test_multiple_source_sentences_picks_max_similarity(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # 1 response sentence, 2 source sentences
+        # resp sim src0 = 0.0 (orthogonal), resp sim src1 = 1.0 (identical)
+        # max similarity = 1.0 → supported
+        hallucination._embedder = _mock_embedder(np.array([
+            [1.0, 0.0],   # response sentence
+            [0.0, 1.0],   # source sentence 0 — orthogonal
+            [1.0, 0.0],   # source sentence 1 — identical
+        ]))
+        hallucination._ready = True
+        r = hallucination.check_grounded(
+            "A response claim.",
+            "Different topic here. A response claim.",
+        )
+        assert r.metadata["sentences"][0]["supported"] is True
+        assert not r.triggered
+
+    def test_reason_includes_counts_when_triggered(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        hallucination._embedder = _mock_embedder(np.array([
+            [0.0, 1.0],  # response — orthogonal to source → unsupported
+            [1.0, 0.0],  # source
+        ]))
+        hallucination._ready = True
+        r = hallucination.check_grounded("Bad claim.", "Good source.")
+        assert r.triggered
+        assert "1/1" in r.reason  # "1/1 sentences unsupported"
