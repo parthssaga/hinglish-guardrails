@@ -3,10 +3,11 @@ REST API for the Hinglish guardrail pipeline.
 
 Endpoints
 ---------
-POST /check   Run input guardrails on a text string; no LLM call.
-POST /chat    Full pipeline: guardrails + LLM response.
-GET  /stats   Dashboard summary numbers from the SQLite log.
-GET  /health  Liveness probe.
+POST /check          Run input guardrails on a text string; no LLM call.
+POST /chat           Full pipeline: guardrails + LLM response.
+POST /check_grounded Verify whether an LLM response is grounded in source text.
+GET  /stats          Dashboard summary numbers from the SQLite log.
+GET  /health         Liveness probe.
 
 Run:
     uvicorn api:app --host 0.0.0.0 --port 8000 --reload
@@ -94,6 +95,19 @@ class ChatRequest(BaseModel):
         default_factory=list,
         description="Prior turns as [{role, content}, …]",
     )
+    source: str | None = Field(
+        None,
+        description=(
+            "Optional reference/ground-truth text.  When provided, the "
+            "hallucination guardrail runs in grounded mode (sentence-level "
+            "semantic similarity) instead of the confidence-heuristic mode."
+        ),
+    )
+
+
+class GroundedCheckRequest(BaseModel):
+    response: str = Field(..., min_length=1, description="LLM response to verify")
+    source: str = Field(..., min_length=1, description="Reference / ground-truth text")
 
 
 class HealthResponse(BaseModel):
@@ -139,7 +153,26 @@ def chat(
         req.text,
         conversation_id=req.conversation_id,
         history=req.history,
+        source=req.source,
     )
+
+
+@app.post("/check_grounded", tags=["guardrails"])
+def check_grounded(
+    req: GroundedCheckRequest,
+    pipeline: GuardrailPipeline = Depends(get_pipeline),
+) -> dict[str, Any]:
+    """Verify whether an LLM response is grounded in a provided source text.
+
+    Uses sentence-level cosine similarity (paraphrase-multilingual-MiniLM-L12-v2,
+    supports EN / Hindi / Hinglish) to compare each response sentence against
+    the source.  Returns per-sentence grounding scores in ``metadata.sentences``.
+
+    Degrades gracefully to a "grounded/unavailable" result if
+    sentence-transformers is not installed or the model is not cached.
+    """
+    result = pipeline.hallucination.check_grounded(req.response, req.source)
+    return result.as_dict()
 
 
 @app.get("/stats", tags=["monitoring"])

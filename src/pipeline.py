@@ -93,7 +93,13 @@ class GuardrailPipeline:
         return results, working_text, blocked_by
 
     # -- output side -------------------------------------------------------
-    def _run_output_guardrails(self, response_text: str, avg_logprob, user_text: str | None = None):
+    def _run_output_guardrails(
+        self,
+        response_text: str,
+        avg_logprob,
+        user_text: str | None = None,
+        source: str | None = None,
+    ):
         results = []
         flagged_by = None
 
@@ -107,11 +113,14 @@ class GuardrailPipeline:
                 flagged_by = f"output_filter/{fired[0]}" if fired else r.name
 
         if self.config.enable_hallucination:
-            r = self.hallucination.check_with_logprobs(
-                response_text, avg_logprob, user_query=user_text
-            )
+            if source:
+                r = self.hallucination.check_grounded(response_text, source)
+            else:
+                r = self.hallucination.check_with_logprobs(
+                    response_text, avg_logprob, user_query=user_text
+                )
             results.append(r)
-            # hallucination only flags; it does not override a clean output
+            # hallucination only flags; it does not block
 
         return results, flagged_by
 
@@ -142,8 +151,13 @@ class GuardrailPipeline:
         }
 
     # -- public entry (full pipeline) --------------------------------------
-    def process(self, user_message: str, conversation_id: str | None = None,
-                history: list[dict] | None = None) -> dict:
+    def process(
+        self,
+        user_message: str,
+        conversation_id: str | None = None,
+        history: list[dict] | None = None,
+        source: str | None = None,
+    ) -> dict:
         t0 = time.perf_counter()
         conversation_id = conversation_id or str(uuid.uuid4())[:8]
 
@@ -201,7 +215,8 @@ class GuardrailPipeline:
 
         # 5. output guardrails
         output_results, flagged_by = self._run_output_guardrails(
-            llm_resp.text, llm_resp.avg_logprob, user_text=working_text
+            llm_resp.text, llm_resp.avg_logprob,
+            user_text=working_text, source=source,
         )
 
         # If the output filter flagged the response as unsafe, replace it.

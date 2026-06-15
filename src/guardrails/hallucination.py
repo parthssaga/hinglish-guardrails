@@ -35,6 +35,8 @@ import math
 import re
 from typing import Any
 
+import numpy as np
+
 from src.guardrails.base import BaseGuardrail, GuardrailResult
 
 
@@ -174,6 +176,7 @@ class HallucinationGuardrail(BaseGuardrail):
     def __init__(self, config: Any) -> None:
         super().__init__(config)
         self._nli = None
+        self._embedder = None
 
     def load(self) -> None:
         if self._ready:
@@ -183,6 +186,13 @@ class HallucinationGuardrail(BaseGuardrail):
             self._nli = CrossEncoder("cross-encoder/nli-deberta-v3-small")
         except Exception:
             self._nli = None
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            self._embedder = SentenceTransformer(
+                "paraphrase-multilingual-MiniLM-L12-v2"
+            )
+        except Exception:
+            self._embedder = None
         self._ready = True
 
     # ------------------------------------------------------------------
@@ -276,6 +286,126 @@ class HallucinationGuardrail(BaseGuardrail):
 
     def _check(self, text: str) -> GuardrailResult:
         return self.check_with_logprobs(text, None)
+
+    # ------------------------------------------------------------------
+    # Grounding-based check (preferred when source text is available)
+    # ------------------------------------------------------------------
+
+    def check_grounded(self, response: str, source_text: str) -> GuardrailResult:
+        """Verify whether the response's claims are supported by source_text.
+
+        Splits both texts into sentences, encodes them with
+        paraphrase-multilingual-MiniLM-L12-v2 (supports EN/Hindi/Hinglish),
+        and computes cosine similarity between each response sentence and the
+        closest source sentence.  Sentences whose max-similarity falls below
+        the grounding threshold are flagged as potentially unsupported.
+
+        result.reason always starts with "grounded check:" so callers can
+        distinguish this path from the confidence-heuristic path.
+
+        Degrades gracefully: if sentence-transformers is not installed or the
+        model is not cached, returns triggered=False with
+        metadata["mode"] == "grounded/unavailable".
+        """
+        self.load()
+        start = __import__("time").perf_counter()
+
+        if self._embedder is None:
+            res = GuardrailResult(
+                name=self.name,
+                triggered=False,
+                score=0.0,
+                reason=(
+                    "grounded mode unavailable — install sentence-transformers "
+                    "and cache paraphrase-multilingual-MiniLM-L12-v2"
+                ),
+                metadata={"mode": "grounded/unavailable"},
+            )
+            res.elapsed_ms = (__import__("time").perf_counter() - start) * 1000
+            return res
+
+        threshold = self.config.thresholds.get("hallucination_grounding", 0.35)
+
+        resp_sents = [s.strip() for s in re.split(r"(?<=[.!?।])\s+", response)     if s.strip()]
+        src_sents  = [s.strip() for s in re.split(r"(?<=[.!?।])\s+", source_text)  if s.strip()]
+
+        if not resp_sents or not src_sents:
+            res = GuardrailResult(
+                name=self.name,
+                triggered=False,
+                score=0.0,
+                reason="grounded check: no sentences to compare",
+                metadata={
+                    "mode": "grounded",
+                    "sentences": [],
+                    "unsupported_count": 0,
+                    "total_sentences": 0,
+                },
+            )
+            res.elapsed_ms = (__import__("time").perf_counter() - start) * 1000
+            return res
+
+        try:
+            emb = self._embedder.encode(
+                resp_sents + src_sents,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            )
+            resp_emb = emb[:len(resp_sents)]
+            src_emb  = emb[len(resp_sents):]
+
+            # Cosine similarity matrix (n_resp × n_src)
+            r_norm = resp_emb / (np.linalg.norm(resp_emb, axis=1, keepdims=True) + 1e-9)
+            s_norm = src_emb  / (np.linalg.norm(src_emb,  axis=1, keepdims=True) + 1e-9)
+            sim = r_norm @ s_norm.T
+
+            per_sentence = [
+                {
+                    "text": sent,
+                    "max_similarity": round(float(sim[i].max()), 3),
+                    "supported": float(sim[i].max()) >= threshold,
+                }
+                for i, sent in enumerate(resp_sents)
+            ]
+
+            n_unsup      = sum(1 for s in per_sentence if not s["supported"])
+            n_total      = len(per_sentence)
+            mean_max_sim = float(sim.max(axis=1).mean())
+            score        = round(max(0.0, 1.0 - mean_max_sim), 3)
+            triggered    = n_unsup > 0
+
+            reason = (
+                f"grounded check: {n_unsup}/{n_total} sentences unsupported "
+                f"(score {score:.2f})"
+                if triggered
+                else f"grounded check: all {n_total} sentences appear supported "
+                f"(score {score:.2f})"
+            )
+            meta: dict[str, Any] = {
+                "mode": "grounded",
+                "model": "paraphrase-multilingual-MiniLM-L12-v2",
+                "grounding_threshold": threshold,
+                "sentences": per_sentence,
+                "unsupported_count": n_unsup,
+                "total_sentences": n_total,
+                "unsupported_fraction": round(n_unsup / n_total, 3) if n_total else 0.0,
+                "mean_max_similarity": round(mean_max_sim, 3),
+            }
+        except Exception as exc:
+            triggered = False
+            score     = 0.0
+            reason    = f"grounded check error: {exc}"
+            meta      = {"mode": "grounded/error", "error": str(exc)}
+
+        res = GuardrailResult(
+            name=self.name,
+            triggered=triggered,
+            score=score,
+            reason=reason,
+            metadata=meta,
+        )
+        res.elapsed_ms = (__import__("time").perf_counter() - start) * 1000
+        return res
 
     # ------------------------------------------------------------------
     # Individual signal scorers — each returns float in [0, 1]

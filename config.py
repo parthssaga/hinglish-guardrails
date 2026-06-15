@@ -63,6 +63,7 @@ THRESHOLDS = {
     "output_pii":                   0.50,  # PII in output is always a concern
     # hallucination flag
     "hallucination_confidence": 0.45,  # flag when avg confidence is BELOW this
+    "hallucination_grounding":  0.35,  # min cosine sim for a sentence to be "supported"
 }
 
 

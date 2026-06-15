@@ -178,3 +178,71 @@ class TestStats:
             assert "by_guardrail" in body
         finally:
             app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# POST /check_grounded
+# ---------------------------------------------------------------------------
+
+class TestCheckGrounded:
+    def test_check_grounded_returns_200(
+        self, mock_pipeline: MagicMock, mock_log: MagicMock
+    ) -> None:
+        client = _client_with_mocks(mock_pipeline, mock_log)
+        try:
+            r = client.post(
+                "/check_grounded",
+                json={
+                    "response": "Paris is the capital of France.",
+                    "source": "France is a country in Europe. Its capital is Paris.",
+                },
+            )
+            assert r.status_code == 200
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_check_grounded_body_shape(
+        self, mock_pipeline: MagicMock, mock_log: MagicMock
+    ) -> None:
+        client = _client_with_mocks(mock_pipeline, mock_log)
+        try:
+            body = client.post(
+                "/check_grounded",
+                json={"response": "A claim.", "source": "Some context."},
+            ).json()
+            assert "name" in body
+            assert "triggered" in body
+            assert "score" in body
+            assert "metadata" in body
+            assert body["name"] == "hallucination"
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_check_grounded_missing_source_rejected(self) -> None:
+        with TestClient(app) as client:
+            r = client.post("/check_grounded", json={"response": "test"})
+        assert r.status_code == 422
+
+    def test_check_grounded_empty_response_rejected(self) -> None:
+        with TestClient(app) as client:
+            r = client.post("/check_grounded", json={"response": "", "source": "context"})
+        assert r.status_code == 422
+
+    def test_chat_with_source_passes_through(
+        self, mock_pipeline: MagicMock, mock_log: MagicMock
+    ) -> None:
+        client = _client_with_mocks(mock_pipeline, mock_log)
+        try:
+            client.post(
+                "/chat",
+                json={
+                    "text": "Summarise the document.",
+                    "source": "The document discusses climate change.",
+                },
+            )
+            call_kwargs = mock_pipeline.process.call_args
+            assert call_kwargs is not None
+            # source should have been forwarded
+            assert call_kwargs.kwargs.get("source") == "The document discusses climate change."
+        finally:
+            app.dependency_overrides.clear()

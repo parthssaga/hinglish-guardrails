@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from config import PipelineConfig
+from src.guardrails.base import GuardrailResult
 from src.guardrails.hallucination import HallucinationGuardrail
 from src.guardrails.injection import InjectionGuardrail
 from src.guardrails.jailbreak import JailbreakGuardrail
@@ -62,6 +63,22 @@ def mock_pipeline(cfg: PipelineConfig) -> MagicMock:
     result.  Override individual attributes in tests as needed.
     """
     m = MagicMock()
+    m.hallucination.check_grounded.return_value = GuardrailResult(
+        name="hallucination",
+        triggered=False,
+        score=0.0,
+        reason="grounded check: all 1 sentences appear supported (score 0.00)",
+        metadata={
+            "mode": "grounded",
+            "model": "paraphrase-multilingual-MiniLM-L12-v2",
+            "grounding_threshold": 0.35,
+            "sentences": [{"text": "Mocked.", "max_similarity": 0.9, "supported": True}],
+            "unsupported_count": 0,
+            "total_sentences": 1,
+            "unsupported_fraction": 0.0,
+            "mean_max_similarity": 0.9,
+        },
+    )
     m.check_input.return_value = {
         "language": "en",
         "lang_conf": 0.99,

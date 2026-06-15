@@ -2,15 +2,18 @@
 
 All tests run against the heuristic path only (no model download needed).
 The logprob path is tested by injecting a synthetic avg_logprob value.
-Tests assert on deterministic rule-based behaviour so CI always passes
-without internet access.
+check_grounded tests inject a mock SentenceTransformer so no download
+is required; the unavailable-model path is also explicitly tested.
+Tests assert on deterministic behaviour so CI always passes offline.
 """
 
 from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
+from unittest.mock import MagicMock
 
 from src.guardrails.hallucination import HallucinationGuardrail
 
@@ -201,3 +204,93 @@ class TestMetadataStructure:
         r = hallucination.check_with_logprobs("Some text.", None)
         # composite_score in metadata is rounded; verify it is in [0, 1]
         assert 0.0 <= r.metadata["composite_score"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# check_grounded
+# ---------------------------------------------------------------------------
+
+def _mock_embedder(embeddings: np.ndarray) -> MagicMock:
+    m = MagicMock()
+    m.encode.return_value = embeddings
+    return m
+
+
+class TestCheckGrounded:
+    def test_unavailable_embedder_returns_clean_result(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        hallucination._embedder = None
+        hallucination._ready = True
+        r = hallucination.check_grounded("Paris is in France.", "Paris is the capital of France.")
+        assert r.name == "hallucination"
+        assert not r.triggered
+        assert r.metadata["mode"] == "grounded/unavailable"
+
+    def test_supported_response_not_triggered(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # Identical unit vectors → cosine similarity = 1.0 → supported
+        hallucination._embedder = _mock_embedder(np.array([[1.0, 0.0], [1.0, 0.0]]))
+        hallucination._ready = True
+        r = hallucination.check_grounded("Paris is in France.", "Paris is the capital of France.")
+        assert not r.triggered
+        assert r.metadata["mode"] == "grounded"
+        assert r.metadata["sentences"][0]["supported"] is True
+
+    def test_unsupported_claim_triggers(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # Orthogonal vectors → cosine similarity = 0.0 → unsupported
+        hallucination._embedder = _mock_embedder(np.array([[1.0, 0.0], [0.0, 1.0]]))
+        hallucination._ready = True
+        r = hallucination.check_grounded(
+            "The Eiffel Tower is in London.",
+            "The Eiffel Tower is located in Paris, France.",
+        )
+        assert r.triggered
+        assert r.metadata["sentences"][0]["supported"] is False
+        assert r.metadata["unsupported_count"] == 1
+
+    def test_metadata_structure_complete(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        hallucination._embedder = _mock_embedder(np.array([[1.0, 0.0], [1.0, 0.0]]))
+        hallucination._ready = True
+        r = hallucination.check_grounded("A fact.", "A fact is stated here.")
+        meta = r.metadata
+        for key in (
+            "mode", "model", "grounding_threshold", "sentences",
+            "unsupported_count", "total_sentences",
+            "unsupported_fraction", "mean_max_similarity",
+        ):
+            assert key in meta, f"missing key: {key}"
+
+    def test_reason_contains_grounded(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        hallucination._embedder = _mock_embedder(np.array([[1.0, 0.0], [1.0, 0.0]]))
+        hallucination._ready = True
+        r = hallucination.check_grounded("Paris is in France.", "Paris is in France.")
+        assert r.reason.startswith("grounded check:")
+
+    def test_per_sentence_scores_multi_sentence(
+        self, hallucination: HallucinationGuardrail
+    ) -> None:
+        # 2 response sentences + 1 source sentence → 3 embeddings
+        # resp[0] identical to source (sim=1), resp[1] orthogonal (sim=0)
+        hallucination._embedder = _mock_embedder(np.array([
+            [1.0, 0.0],  # response sentence 0
+            [0.0, 1.0],  # response sentence 1
+            [1.0, 0.0],  # source sentence
+        ]))
+        hallucination._ready = True
+        r = hallucination.check_grounded(
+            "Paris is in France. The moon is made of cheese.",
+            "Paris is the capital of France.",
+        )
+        assert len(r.metadata["sentences"]) == 2
+        assert r.metadata["sentences"][0]["supported"] is True
+        assert r.metadata["sentences"][1]["supported"] is False
+        assert r.metadata["unsupported_count"] == 1
+        assert r.metadata["total_sentences"] == 2
