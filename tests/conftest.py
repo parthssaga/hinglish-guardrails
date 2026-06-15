@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from config import PipelineConfig
+from src.guardrails.hallucination import HallucinationGuardrail
 from src.guardrails.injection import InjectionGuardrail
 from src.guardrails.jailbreak import JailbreakGuardrail
 from src.guardrails.pii import PIIGuardrail
@@ -46,6 +47,11 @@ def jailbreak(cfg: PipelineConfig) -> JailbreakGuardrail:
 @pytest.fixture()
 def pii(cfg: PipelineConfig) -> PIIGuardrail:
     return PIIGuardrail(cfg)
+
+
+@pytest.fixture()
+def hallucination(cfg: PipelineConfig) -> HallucinationGuardrail:
+    return HallucinationGuardrail(cfg)
 
 
 @pytest.fixture()

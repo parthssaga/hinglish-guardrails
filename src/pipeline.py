@@ -93,7 +93,7 @@ class GuardrailPipeline:
         return results, working_text, blocked_by
 
     # -- output side -------------------------------------------------------
-    def _run_output_guardrails(self, response_text: str, avg_logprob):
+    def _run_output_guardrails(self, response_text: str, avg_logprob, user_text: str | None = None):
         results = []
         flagged_by = None
 
@@ -107,7 +107,9 @@ class GuardrailPipeline:
                 flagged_by = f"output_filter/{fired[0]}" if fired else r.name
 
         if self.config.enable_hallucination:
-            r = self.hallucination.check_with_logprobs(response_text, avg_logprob)
+            r = self.hallucination.check_with_logprobs(
+                response_text, avg_logprob, user_query=user_text
+            )
             results.append(r)
             # hallucination only flags; it does not override a clean output
 
@@ -199,7 +201,7 @@ class GuardrailPipeline:
 
         # 5. output guardrails
         output_results, flagged_by = self._run_output_guardrails(
-            llm_resp.text, llm_resp.avg_logprob
+            llm_resp.text, llm_resp.avg_logprob, user_text=working_text
         )
 
         # If the output filter flagged the response as unsafe, replace it.
