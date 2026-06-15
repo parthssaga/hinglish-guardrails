@@ -39,8 +39,8 @@ _LOCAL_MURIL = os.getenv("MURIL_CHECKPOINT", "models/muril-guardrail")
 _MURIL = _LOCAL_MURIL if os.path.isdir(_LOCAL_MURIL) else "google/muril-base-cased"
 
 MODELS = {
-    "toxicity":  _MURIL,
-    "jailbreak": _MURIL,
+    "toxicity":  "google/muril-base-cased",
+    "jailbreak": "google/muril-base-cased",
     "pii_ner": "ai4bharat/IndicNER",
     "injection": "protectai/deberta-v3-base-prompt-injection-v2",
     "output_toxicity": "distilbert-base-multilingual-cased",
