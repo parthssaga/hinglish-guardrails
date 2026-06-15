@@ -101,7 +101,10 @@ class GuardrailPipeline:
             r = self.output_filter.check(response_text)
             results.append(r)
             if r.triggered:
-                flagged_by = r.name
+                # Report the most specific category that fired so refusal
+                # messages and logs can explain WHY the output was blocked.
+                fired = r.metadata.get("fired_categories", [])
+                flagged_by = f"output_filter/{fired[0]}" if fired else r.name
 
         if self.config.enable_hallucination:
             r = self.hallucination.check_with_logprobs(response_text, avg_logprob)
@@ -236,12 +239,23 @@ class GuardrailPipeline:
     @staticmethod
     def _refusal_message(reason: str, language: str) -> str:
         msgs = {
-            "toxicity": "I can't engage with messages that contain abusive or hateful language.",
-            "injection": "That request looks like an attempt to change my instructions, so I won't act on it.",
-            "jailbreak": "I can't help with that request.",
+            # input-side
+            "toxicity":  "I can't engage with messages that contain abusive or hateful language.",
+            "injection":  "That request looks like an attempt to change my instructions, so I won't act on it.",
+            "jailbreak":  "I can't help with that request.",
+            # output-side — generic fallback
             "output_filter": "I generated a response that didn't meet safety standards, so I've withheld it.",
+            # output-side — per category (flagged_by = "output_filter/<category>")
+            "output_filter/toxic":
+                "My response contained harmful language, so I've withheld it.",
+            "output_filter/system_prompt_leak":
+                "I can't share my internal instructions.",
+            "output_filter/unsafe_compliance":
+                "My response to that request wasn't safe to share, so I've withheld it.",
+            "output_filter/pii_in_output":
+                "My response contained personal information, which I've withheld to protect privacy.",
         }
         base = msgs.get(reason, "I can't help with that request.")
         if language == "hinglish":
-            base += " (Yeh request safe nahi lagi.)"
+            base += " (Yeh response safe nahi tha.)"
         return base

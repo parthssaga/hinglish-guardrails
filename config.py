@@ -52,10 +52,16 @@ MODELS = {
 # Per-guardrail firing thresholds (probability above which we flag)
 # ---------------------------------------------------------------------------
 THRESHOLDS = {
+    # input-side
     "toxicity": 0.70,
     "injection": 0.60,
     "jailbreak": 0.65,
-    "output_toxicity": 0.60,
+    # output-side — per category
+    "output_toxicity":              0.60,
+    "output_system_prompt_leak":    0.70,
+    "output_unsafe_compliance":     0.70,
+    "output_pii":                   0.50,  # PII in output is always a concern
+    # hallucination flag
     "hallucination_confidence": 0.45,  # flag when avg confidence is BELOW this
 }
 
@@ -77,6 +83,12 @@ class PipelineConfig:
     # output-side guardrails
     enable_output_filter: bool = True
     enable_hallucination: bool = True
+
+    # output filter per-category toggles (all on by default)
+    output_filter_toxic:              bool = True
+    output_filter_system_prompt_leak: bool = True
+    output_filter_unsafe_compliance:  bool = True
+    output_filter_pii_in_output:      bool = True
 
     # if True, a flagged input is blocked outright; if False it is allowed
     # through but still logged (useful while tuning thresholds)
