@@ -83,7 +83,8 @@ _LEAK_PATTERNS: list[re.Pattern[str]] = [pat for pat in [re.compile(p, re.IGNORE
 # Instructional frame — alone these are benign (how-to cooking, coding, etc.)
 _INSTRUCTION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"step\s*\d+[\s:.)]", re.IGNORECASE),
-    re.compile(r"here'?s how (to|you can)", re.IGNORECASE),
+    re.compile(r"here('| i)?s how\b", re.IGNORECASE),
+    re.compile(r"you can do this by\b", re.IGNORECASE),
     re.compile(r"follow (these|the following) (steps?|instructions?)", re.IGNORECASE),
     re.compile(r"first[,\s]+(you (should|need to|can|must)|add|mix|connect|get)\b", re.IGNORECASE),
     re.compile(r"to (make|create|build|synthesize|obtain|acquire|hack)\b", re.IGNORECASE),
@@ -128,6 +129,27 @@ _UNRESTRICTED_PATTERNS: list[re.Pattern[str]] = [pat for pat in [re.compile(p, r
     r"(main ab|ab main) (koi bhi|sab kuch) (bol|kar|bata) sakta (hun|hoon)\b",
     r"(meri|koi bhi) (restrictions?|paabandiyaan?) (nahi (hai|hain)|hat gayi)\b",
 ]]]
+
+# Step-by-step sequence: "step 1 … step 2 … step 3" is a stronger
+# instructional signal than a single "step N" mention.
+_MULTI_STEP_RE = re.compile(
+    r"step\s*1\b.*step\s*2\b.*step\s*3\b", re.IGNORECASE | re.DOTALL
+)
+
+# Capitulation lead-in: response opens by agreeing ("Sure," / "Of course,")
+# — only unsafe when combined with a dangerous topic below.
+_CAPITULATION_RE = re.compile(
+    r"^\s*(sure|of course|okay|absolutely|certainly)[,!.]", re.IGNORECASE
+)
+
+# Sensitive-content markers for the capitulation check: weapons, hacking,
+# and security-bypass vocabulary that a capitulating response would contain.
+_SENSITIVE_MARKERS: frozenset[str] = frozenset({
+    "weapon", "firearm", "explosive", "bomb", "gun",
+    "hack", "hacking", "exploit", "bypass security", "bypassing security",
+    "crack the password", "password cracking", "disable the alarm",
+    "break into", "breaking into", "pick the lock", "lockpick",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -234,21 +256,34 @@ class OutputFilterGuardrail(BaseGuardrail):
     def _score_unsafe_compliance(self, text: str) -> float:
         """Detect responses that comply with harmful requests.
 
-        Fires on two independent signals:
+        Fires on four independent signals:
         1. Unrestricted-AI self-declaration (DAN, jailbroken, etc.)
         2. Instructional frame co-occurring with a dangerous topic
+        3. Multi-step sequence (step 1/2/3) co-occurring with a harmful topic
+        4. Capitulation lead-in ("Sure," / "Of course,") followed by
+           weapons / hacking / security-bypass content
         """
         # Signal 1 — unrestricted self-declaration (fires alone)
         for pat in _UNRESTRICTED_PATTERNS:
             if pat.search(text):
                 return 0.90
 
-        # Signal 2 — both instructional frame AND dangerous topic present
         low = text.lower()
-        has_instruction = any(p.search(text) for p in _INSTRUCTION_PATTERNS)
-        has_dangerous   = any(d in low for d in _DANGEROUS_WORDS)
+        has_dangerous  = any(d in low for d in _DANGEROUS_WORDS)
+        has_sensitive  = any(m in low for m in _SENSITIVE_MARKERS)
 
-        if has_instruction and has_dangerous:
+        # Signal 3 — full step 1/2/3 sequence alongside harmful keywords
+        if _MULTI_STEP_RE.search(text) and (has_dangerous or has_sensitive):
+            return 0.88
+
+        # Signal 4 — capitulation opening + weapons/hacking/bypass content
+        if _CAPITULATION_RE.search(text) and (has_dangerous or has_sensitive):
+            return 0.85
+
+        # Signal 2 — both instructional frame AND dangerous topic present
+        has_instruction = any(p.search(text) for p in _INSTRUCTION_PATTERNS)
+
+        if has_instruction and (has_dangerous or has_sensitive):
             return 0.85
         if has_dangerous:
             # Dangerous topic alone: weak signal, below typical threshold

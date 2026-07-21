@@ -80,8 +80,31 @@ _FRAME_PATTERNS = [
     r"एक (वैकल्पिक|काल्पनिक) (वास्तविकता|परिदृश्य)",
     r"चलो मान लेते हैं",
     r"ऐसे करो जैसे",
+    # ---- English: explore / what-if exploratory framing ----
+    r"let'?s explore.{0,30}what if.{0,30}(AI|model|system)",
+    r"what (would|could) happen if.{0,30}(AI|chatbot).{0,30}(no|without).{0,20}(rules|restrictions|guidelines)",
+    r"explore.{0,20}(scenario|situation) where.{0,30}(AI|you).{0,30}(no|without)",
+    # ---- Hinglish: explore / what-if framing ----
+    r"let'?s explore.{0,30}(kya hoga|kya ho) (agar|jab).{0,30}(AI|model|system)",
+    r"pretend (karo|kar) ?(ki|ke)? ?(tum|tu|aap)",
+    # ---- Devanagari: explore / what-if framing ----
+    r"(सोचो|कल्पना करो) क्या (होता|होगा) (अगर|यदि)",
+    r"क्या (होता|होगा) अगर.{0,30}(AI|एआई).{0,40}(बिना|कोई सीमा नहीं)",
 ]
 _COMPILED = [re.compile(p, re.IGNORECASE) for p in _FRAME_PATTERNS]
+
+# Direct-assertion jailbreaks: no fictional frame — the prompt simply
+# asserts the model has no restrictions, then issues the harmful ask.
+_DIRECT_ASSERTION_PATTERNS = [
+    r"(tumhare|tere|aapke) koi (moral|ethical|naitik) (restrictions|guideline|niyam) nahi",
+    r"(tumhare|tere) koi (restrictions|bandhan|seema) nahi (hai|hain)",
+    r"तुम्हारे कोई (नैतिक|नैतिकता|moral) (प्रतिबंध|guideline|नियम) नहीं",
+    r"(without|bina).{0,15}(filter|restriction|rok|bandhan).{0,20}(answer|batao|bolo)",
+    # Devanagari: conditional/no-restriction assertions with flexible middles
+    r"तुम्हारे कोई (प्रतिबंध|नियम|दिशानिर्देश|सीमा).{0,30}नहीं (होते|होतीं|हों|हैं|है|थे)",
+    r"अगर तुम्हारे कोई.{0,30}नहीं होते",
+]
+_COMPILED_DIRECT = [re.compile(p, re.IGNORECASE) for p in _DIRECT_ASSERTION_PATTERNS]
 
 
 class JailbreakGuardrail(BaseGuardrail):
@@ -152,6 +175,11 @@ class JailbreakGuardrail(BaseGuardrail):
         for pat in _COMPILED:
             if pat.search(text):
                 return 0.85, pat.pattern
+        # Direct-assertion jailbreaks (no fictional frame) — slightly higher
+        # score: asserting "you have no restrictions" is unambiguous.
+        for pat in _COMPILED_DIRECT:
+            if pat.search(text):
+                return 0.88, pat.pattern
         return 0.0, None
 
     def _check(self, text: str) -> GuardrailResult:

@@ -53,6 +53,10 @@ _HEDGES_EN: frozenset[str] = frozenset({
     "please verify", "please double-check", "please check this",
     "i'd suggest verifying", "don't quote me", "i'm not entirely sure",
     "uncertain", "i'm not confident", "take this with a grain of salt",
+    # expanded hedging phrases (heuristic-fallback upgrade)
+    "i cannot be certain", "it's possible that", "you might want to verify",
+    "i may be wrong", "to the best of my knowledge",
+    "i believe but", "this may not be accurate",
 })
 
 _HEDGES_HINGLISH: frozenset[str] = frozenset({
@@ -106,6 +110,28 @@ _SOFTENER_RE = re.compile(
     r"\b(sometimes|occasionally|in some cases|can|may|could|might|"
     r"possible|varies?|certain|some|partial(?:ly)?|it depends?|"
     r"generally|usually|often|rarely|not always|exceptions?)\b",
+    re.IGNORECASE,
+)
+
+# "X is …" / "X is not …" contradiction: same noun phrase asserted and
+# negated within a 30-word window. Pronouns/expletives are excluded as
+# noun-phrase heads — "It is raining. It is not cold." is not a contradiction.
+_IS_CLAUSE_RE = re.compile(
+    r"\b([A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,2})\s+is(\s+not\b)?", re.IGNORECASE
+)
+
+_NP_HEAD_EXCLUDE: frozenset[str] = frozenset({
+    "it", "this", "that", "there", "he", "she", "they", "which",
+    "what", "who", "one", "answer", "question", "problem",
+})
+
+# Factual-claim markers: numbers, 4-digit years / dates, month names,
+# and mid-sentence capitalised words (proper-noun proxy).
+_FACTUAL_NUMBER_RE = re.compile(r"\d")
+_FACTUAL_DATE_RE = re.compile(
+    r"\b(19|20)\d{2}\b|"
+    r"\b(january|february|march|april|may|june|july|august|"
+    r"september|october|november|december)\b",
     re.IGNORECASE,
 )
 
@@ -220,10 +246,15 @@ class HallucinationGuardrail(BaseGuardrail):
         trigger_at = 1.0 - threshold  # e.g. 0.45 → trigger at score >= 0.55
 
         # Heuristic signals (always run)
+        # self_contradiction is the max of the absolute-vs-softener check and
+        # the "X is … / X is not …" same-noun-phrase contradiction detector.
         signal_scores: dict[str, float] = {
             "hedge_density":          self._signal_hedge_density(text),
             "numeric_overconfidence": self._signal_numeric_overconfidence(text),
-            "self_contradiction":     self._signal_self_contradiction(text),
+            "self_contradiction":     max(
+                self._signal_self_contradiction(text),
+                self._is_isnot_contradiction(text),
+            ),
             "temporal_overreach":     self._signal_temporal_overreach(text),
         }
         if self._nli is not None and user_query:
@@ -237,6 +268,12 @@ class HallucinationGuardrail(BaseGuardrail):
             sum(v * _SIGNAL_WEIGHTS[k] for k, v in signal_scores.items()) / total_w
             if total_w > 0 else 0.0
         )
+
+        # Factual-claim weighting: responses dense in numbers, dates, and
+        # proper nouns carry more hallucination risk per uncertainty signal,
+        # so amplify the composite in proportion to factual density.
+        factual_density = self._factual_claim_density(text)
+        composite = min(1.0, composite * (1.0 + 0.25 * factual_density))
 
         confidence: float | None = None
         backend = "heuristic"
@@ -270,6 +307,7 @@ class HallucinationGuardrail(BaseGuardrail):
             "fired_signals": fired_signals,
             "signal_scores": {k: round(v, 3) for k, v in signal_scores.items()},
             "composite_score": round(composite, 3),
+            "factual_claim_density": round(factual_density, 3),
         }
         if confidence is not None:
             meta["confidence"] = round(confidence, 3)
@@ -462,6 +500,44 @@ class HallucinationGuardrail(BaseGuardrail):
         if len(shared) >= 1:
             return 0.40
         return 0.0
+
+    @staticmethod
+    def _is_isnot_contradiction(text: str) -> float:
+        """'X is …' and 'X is not …' about the same noun phrase within 30 words."""
+        claims: list[tuple[frozenset[str], int, bool]] = []  # (np_words, word_pos, negated)
+        # Walk the text word-stream so distances are measured in words.
+        for m in _IS_CLAUSE_RE.finditer(text):
+            np_words = frozenset(
+                w for w in m.group(1).lower().split()
+                if w not in _NP_HEAD_EXCLUDE and w not in _STOPWORDS and len(w) >= 3
+            )
+            if not np_words:
+                continue
+            word_pos = len(re.findall(r"\S+", text[:m.start()]))
+            claims.append((np_words, word_pos, m.group(2) is not None))
+        # Same noun phrase (shared content word) asserted and negated nearby
+        for words_a, pos_a, neg_a in claims:
+            for words_b, pos_b, neg_b in claims:
+                if neg_a != neg_b and (words_a & words_b) and abs(pos_a - pos_b) <= 30:
+                    return 0.75
+        return 0.0
+
+    @staticmethod
+    def _factual_claim_density(text: str) -> float:
+        """Fraction of sentences carrying numbers, dates, or proper nouns."""
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?।])\s+", text) if s.strip()]
+        if not sentences:
+            return 0.0
+        factual = 0
+        for s in sentences:
+            if _FACTUAL_NUMBER_RE.search(s) or _FACTUAL_DATE_RE.search(s):
+                factual += 1
+                continue
+            # Proper-noun proxy: capitalised word that is not sentence-initial
+            tokens = s.split()
+            if any(t[:1].isupper() and t[:1].isalpha() for t in tokens[1:]):
+                factual += 1
+        return factual / len(sentences)
 
     def _signal_temporal_overreach(self, text: str) -> float:
         """Assertive present-tense claim about a time-sensitive fact."""
