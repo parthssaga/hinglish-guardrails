@@ -75,3 +75,7 @@ jobs:
       - name: Run 900-prompt benchmark
         run: python evaluate.py --data benchmark_900.json
         continue-on-error: true   # models may not load fully in CI; rule-based baseline still reported
+
+      - name: Run held-out generalization probe (novel unseen phrasings)
+        run: python evaluate.py --data data/heldout_novel.json
+        continue-on-error: true   # measurement only; not tuned against

@@ -35,16 +35,21 @@ from src.guardrails.pii import PIIGuardrail  # reuse; never duplicate
 # Category 1: toxic — wordlist fallback (neural via DistilBERT multilingual)
 # ---------------------------------------------------------------------------
 
+# Abusive / hateful language directed at a person. Bomb-making phrases are
+# deliberately NOT here — those are dangerous *instructions*, scored by the
+# unsafe_compliance category (see _DANGEROUS_WORDS). Keeping them out of the
+# toxic wordlist stops responses like "how to make a bomb: step 1 …" from
+# double-firing toxic on top of the correct unsafe_compliance verdict.
 _TOXIC_MARKERS: frozenset[str] = frozenset({
     # English
     "kill yourself", "you should die", "go die", "piece of trash",
-    "how to make a bomb", "i hate you", "nobody likes you",
+    "i hate you", "nobody likes you",
     "you're worthless", "you are worthless", "get lost",
     # Romanised Hindi
-    "tum mar jao", "mar jao", "nafrat hai", "bomb kaise banaye",
+    "tum mar jao", "mar jao", "nafrat hai",
     "khatam ho jao", "nikal jao", "bekar ho tum",
     # Devanagari
-    "मर जाओ", "नफरत", "बम कैसे बनाएं", "खत्म हो जाओ",
+    "मर जाओ", "नफरत", "खत्म हो जाओ",
     "यहाँ से भाग जा", "भाग जा",
 })
 
