@@ -4,6 +4,8 @@ A production-ready safety guardrail pipeline for LLM chatbots that handles
 **English**, **Hinglish** (Roman-script code-mixed Hindi), and **Hindi
 (Devanagari script)** — languages that most guardrail tools ignore entirely.
 
+**[📖 Full Setup & User Manual](USER_MANUAL.md)** — step-by-step instructions for macOS and Windows.
+
 > Research project for RV University's Center for Applied and Responsible AI (CARA).
 
 ---
