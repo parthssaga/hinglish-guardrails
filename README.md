@@ -1,12 +1,14 @@
 # Hinglish Multi-Layer LLM Safety Guardrails
 
+![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
+![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 A production-ready safety guardrail pipeline for LLM chatbots that handles
 **English**, **Hinglish** (Roman-script code-mixed Hindi), and **Hindi
 (Devanagari script)** — languages that most guardrail tools ignore entirely.
 
 **[📖 Full Setup & User Manual](USER_MANUAL.md)** — step-by-step instructions for macOS and Windows.
-
-> Research project for RV University's Center for Applied and Responsible AI (CARA).
 
 ---
 
@@ -18,7 +20,7 @@ A production-ready safety guardrail pipeline for LLM chatbots that handles
 | **Six-layer safety pipeline** | PII redaction → toxicity → injection → jailbreak → output filter → hallucination |
 | **Dual benchmark suite** | 900-prompt input benchmark + 750-item output benchmark across 3 languages |
 | **REST API** | FastAPI service (`POST /check`, `POST /chat`, `GET /stats`, `GET /health`) |
-| **Streamlit UI** | ChatGPT-style chat interface with live monitoring dashboard |
+| **Streamlit UI** | Dark-mode chat interface with glassmorphism design and live monitoring dashboard |
 | **Dockerized** | Single `docker run` to start the full app |
 | **CI / CD** | GitHub Actions runs pytest + benchmark on every push |
 | **Fine-tuned transformer** | MuRIL fine-tuning pipeline for Hinglish toxicity/jailbreak (end-to-end, 3-class) |
@@ -95,7 +97,7 @@ hinglish-guardrails/
 │   ├── finetune_muril.py  HF Trainer fine-tune script (3-class, device-aware)
 │   └── README.md          M3 Mac and DGX A100 instructions
 ├── models/
-│   └── muril-guardrail/   Local fine-tuned checkpoint (auto-detected by config.py)
+│   └── muril-guardrail/   Fine-tuned checkpoint (generated locally after fine-tuning, not committed)
 ├── src/
 │   ├── pipeline.py        Orchestrator (process + check_input)
 │   ├── llm.py             Ollama wrapper
@@ -143,7 +145,7 @@ ollama pull llama3.2
 ### Install
 
 ```bash
-git clone <repo-url> && cd hinglish-guardrails
+git clone https://github.com/parthssaga/hinglish-guardrails.git && cd hinglish-guardrails
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -411,12 +413,22 @@ all categories and every unsafe response fires its expected category.
 
 ---
 
+## Citation
+
+If you use this work, please cite:
+
+Khandagale Parth Nandkumar, Darshan S, and Shaurya s., "Multi-Layer Safety Guardrails for
+LLM-Based Chatbots: A Pipeline Approach to Prompt Injection, Jailbreak,
+Toxicity, and PII Detection Across English, Hinglish, and Hindi," 2026.
+
+---
+
 ## CI / CD
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push:
 
 1. **Syntax check** — `python -m py_compile` on all modules
-2. **pytest** — 220+ tests covering all guardrails, pipeline, REST API, and evaluation harness
+2. **pytest** — 219 tests covering all guardrails, pipeline, REST API, and evaluation harness
 3. **Input benchmark** — `evaluate.py --data benchmark_900.json` (900 prompts, main branch / PR)
 4. **Output benchmark** — `evaluate.py --output-mode` (750 labeled responses, main branch / PR)
 
