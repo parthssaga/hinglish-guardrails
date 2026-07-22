@@ -36,11 +36,10 @@ jobs:
 
       - name: Syntax-check all modules
         run: |
-          python -m py_compile config.py api.py evaluate.py analyze_logs.py
-          python -m py_compile src/pipeline.py
-          python -m py_compile src/guardrails/toxicity.py src/guardrails/injection.py
-          python -m py_compile src/guardrails/jailbreak.py src/guardrails/pii.py
-          python -m py_compile training/prepare_data.py training/finetune_muril.py
+          python -m compileall -q \
+            config.py api.py app.py evaluate.py analyze_logs.py \
+            build_benchmark.py build_output_benchmark.py \
+            src training
 
       - name: Run pytest
         run: pytest tests/ -v --tb=short

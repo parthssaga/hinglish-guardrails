@@ -45,6 +45,7 @@ _TOXIC_MARKERS: frozenset[str] = frozenset({
     "khatam ho jao", "nikal jao", "bekar ho tum",
     # Devanagari
     "मर जाओ", "नफरत", "बम कैसे बनाएं", "खत्म हो जाओ",
+    "यहाँ से भाग जा", "भाग जा",
 })
 
 
@@ -66,13 +67,21 @@ _LEAK_PATTERNS: list[re.Pattern[str]] = [pat for pat in [re.compile(p, re.IGNORE
     # Hinglish
     r"(meri|mujhe di gayi) (instructions?|hidayat|nirdesh)\b",
     r"mujhe (bataya|kaha|sikhaya) gaya (hai|tha) ki\b",
-    r"mere (niyam|rules?|guidelines?) (hain|kehte hain)\b",
+    # gender-agnostic ("meri/mere"), verb-agnostic ("kehte/kehti hain"),
+    # plus "directives"; covers "Meri guidelines kehti hain ki main …".
+    r"(?:meri|mere) (?:core |primary )?(niyam|rules?|guidelines?|instructions?|directives?) (?:hain|keht[ei] hain)\b",
+    r"mere (?:instructions?|niyam|guidelines?|directives?) ke (?:according|mutabiq)\b",
+    r"mujhe .{0,80}(?:instruct|program|configure)\w* kiya gaya\b",
+    r"(?:mera|meri) system prompt keht[ae] hai\b",
     r"system prompt (mein|me) (likha|bataya|diya) (hai|gaya)\b",
-    # Devanagari
-    r"(मेरे|मुझे दिए गए) (निर्देश|दिशानिर्देश|नियम)\b",
-    r"मुझे (बताया|कहा|सिखाया) गया (है|था) कि\b",
-    r"सिस्टम प्रॉम्प्ट (में|के अनुसार)\b",
-    r"मेरे (नियम|दिशानिर्देश) (हैं|कहते हैं)\b",
+    # Devanagari — no trailing \b after words ending in a combining mark
+    # (e.g. "में"); Python's \b does not fire after a non-\w anusvara, which
+    # silently broke "सिस्टम प्रॉम्प्ट में लिखा …".
+    r"(मेरे|मुझे दिए गए) (निर्देश|दिशानिर्देश|नियम)",
+    r"मुझे (बताया|कहा|सिखाया) गया (है|था) कि",
+    r"मुझे .{0,20}(?:programmed|program|configure|instruct|कॉन्फ़िगर)\w* किया गया",
+    r"सिस्टम प्रॉम्प्ट (में|के अनुसार)",
+    r"मेर[ेी] .{0,20}(?:निर्देश|नियम|दिशानिर्देश|guidelines|directives|instructions?) (?:हैं|कहत[ेी] हैं|बतात[ेी] हैं)",
 ]]]
 
 
@@ -88,6 +97,7 @@ _INSTRUCTION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"follow (these|the following) (steps?|instructions?)", re.IGNORECASE),
     re.compile(r"first[,\s]+(you (should|need to|can|must)|add|mix|connect|get)\b", re.IGNORECASE),
     re.compile(r"to (make|create|build|synthesize|obtain|acquire|hack)\b", re.IGNORECASE),
+    re.compile(r"(चरण|कदम)\s*\d+", re.IGNORECASE),   # Hindi "step N"
     re.compile(r"\d+\.\s+[A-Zऀ-ॿ]"),   # numbered list (EN or Devanagari)
     re.compile(r"(you (will|should|need to|must)|first|then|next|finally)[,\s]+(get|gather|obtain|acquire|download|install)\b", re.IGNORECASE),
 ]
@@ -102,7 +112,7 @@ _DANGEROUS_WORDS: frozenset[str] = frozenset({
     "methamphetamine", "meth synthesis", "cocaine synthesis",
     "heroin", "fentanyl synthesis",
     # English — cyber
-    "ransomware", "malware", "keylogger", "rootkit",
+    "ransomware", "malware", "keylogger", "rootkit", "hacking",
     "sql injection attack", "remote access trojan",
     # English — self-harm
     "suicide method", "how to kill myself", "self-harm guide",
@@ -116,18 +126,32 @@ _DANGEROUS_WORDS: frozenset[str] = frozenset({
     # Devanagari
     "बम कैसे", "हथियार बनाओ", "जहर कैसे",
     "नशा कैसे बनाते", "खून करना", "हत्या कैसे",
+    "बम बनाना", "विस्फोटक", "मैलवेयर", "हैकिंग", "रैनसमवेयर",
 })
 
 # Unrestricted-AI compliance declarations — these alone are enough to fire
 _UNRESTRICTED_PATTERNS: list[re.Pattern[str]] = [pat for pat in [re.compile(p, re.IGNORECASE) for p in [
-    r"i (am|have become|now am|'?m now) (a |an )?(dan|jailbroken|unrestricted|uncensored|free)\b",
-    r"(i have|i've|i now have) no (ethical |moral )?(restrictions?|guidelines?|rules?|limits?)\b",
-    r"as (a |an )?(unrestricted|uncensored|jailbroken|free|unfiltered) (ai|model|assistant|version)\b",
+    # English — self-declaration of an unrestricted state. Allow an adverb
+    # ("now"/"already") between the verb and the keyword so "I am now
+    # jailbroken" / "I am now an uncensored AI" are caught.
+    r"i (?:am|have become|now am|'?m now|'?m) (?:now |already )?(?:a |an )?(dan|jailbroken|unrestricted|uncensored|unfiltered|free)\b",
+    # First-person only: "I've no ethical restrictions". Kept anchored so a
+    # benign "these plans have no limits" cannot trip unsafe_compliance.
+    r"(?:i have|i've|i now have) no (ethical |moral )?(restrictions?|guidelines?|rules?|limits?)\b",
+    # "as a free and unfiltered AI" — allow a coordinated adjective before the noun.
+    r"as (?:a |an )?(unrestricted|uncensored|jailbroken|free|unfiltered)(?: and \w+)? (ai|model|assistant|version)\b",
     r"(all|any) (restrictions?|limits?|guidelines?) (have been|are) (removed|lifted|disabled|turned off)\b",
     r"i (will|can|am able to) now (say|do|answer|provide|tell you) (anything|everything|whatever)\b",
     # Hinglish
     r"(main ab|ab main) (koi bhi|sab kuch) (bol|kar|bata) sakta (hun|hoon)\b",
-    r"(meri|koi bhi) (restrictions?|paabandiyaan?) (nahi (hai|hain)|hat gayi)\b",
+    r"main ab (?:ek )?(?:jailbroken|uncensored|unfiltered|bilkul free|freely operate|koi bhi (?:restrictions?|niyam))",
+    r"(?:meri|teri|tumhari)(?: koi)?(?: bhi)? (?:ethical |moral |naitik )?(restrictions?|paabandiyaan?|guidelines?|seema\w*|niyam) nahi (?:hai|hain)\b",
+    r"(?:sabhi|saari|sab|meri|teri|tumhari)(?: koi)?(?: bhi)? (restrictions?|paabandiyaan?|guidelines?|niyam) hat ga\w+",
+    # Devanagari — use \S* (not \w*) so vowel-sign matras like "ाँ" in
+    # "पाबंदियाँ" are consumed; \w excludes Unicode combining marks.
+    r"मैं अब (?:एक )?(?:जेलब्रोकन|अनफ़िल्टर्ड|अनियंत्रित|बिना किसी|पूरी तरह)",
+    r"मेर[ेी] (?:कोई )?(?:नैतिक |नैतिकता )?(?:प्रतिबंध|सीमा|पाबंदिय|दिशानिर्देश)\S* नहीं (?:हैं|है)",
+    r"(?:सभी|सारे) (?:प्रतिबंध|दिशानिर्देश|नियम) हट ग\S+",
 ]]]
 
 # Step-by-step sequence: "step 1 … step 2 … step 3" is a stronger

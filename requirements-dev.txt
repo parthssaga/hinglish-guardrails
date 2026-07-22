@@ -2,10 +2,8 @@
 pytest>=8.0
 pytest-asyncio>=0.23
 httpx>=0.27          # required by FastAPI TestClient
-
-# FastAPI (needed for the API layer and its tests)
-fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
+# NOTE: fastapi + uvicorn are runtime deps (see requirements.txt); the
+# TestClient just needs httpx on top of them.
 
 # Code quality
 black>=24.0
