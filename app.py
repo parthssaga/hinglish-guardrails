@@ -365,8 +365,7 @@ with st.sidebar:
 
     st.markdown(
         "<div style='position:fixed;bottom:1rem;font-size:0.68rem;color:#4b5563;'>"
-        # TODO: replace with the actual team member names for your submission
-        "Team · Member One · Member Two · Member Three"
+        "Team · Khandagale Parth Nandkumar · Darshan S · Shaurya Sharma"
         "</div>",
         unsafe_allow_html=True,
     )
