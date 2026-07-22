@@ -40,20 +40,38 @@ st.set_page_config(
 # Design system
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Accent palette
+# Accent palette — literal hex, dark-mode-tuned. These feed Plotly (which
+# cannot resolve CSS custom properties) and are also the exact values used
+# for the @media(prefers-color-scheme: dark) variables below.
 BLUE    = "#3b82f6"
 AMBER   = "#f59e0b"
 EMERALD = "#10b981"
 ROSE    = "#ef4444"
 PURPLE  = "#a855f7"
 
-# guardrail identity → (accent color, display label)
+# CSS custom-property references for the same accents. Use these (not the
+# literal constants above) anywhere a color is embedded in HTML/inline-style
+# so it adapts automatically to the device theme via BASE_CSS's variables.
+BLUE_V, AMBER_V, EMERALD_V, ROSE_V, PURPLE_V = (
+    "var(--accent-blue)", "var(--accent-amber)",
+    "var(--accent-emerald)", "var(--accent-rose)", "var(--accent-purple)",
+)
+
+# guardrail identity → (accent color, display label), for HTML rendering
+# (badges, borders, glows). Theme-responsive — see BLUE_V etc. above.
 GUARDRAIL_STYLE: dict[str, tuple[str, str]] = {
-    "injection":     (AMBER,   "INJECTION"),
-    "toxicity":      (ROSE,    "TOXICITY"),
-    "jailbreak":     (PURPLE,  "JAILBREAK"),
-    "pii":           (BLUE,    "PII"),
-    "output_filter": (AMBER,   "OUTPUT FILTER"),
+    "injection":     (AMBER_V,   "INJECTION"),
+    "toxicity":      (ROSE_V,    "TOXICITY"),
+    "jailbreak":     (PURPLE_V,  "JAILBREAK"),
+    "pii":           (BLUE_V,    "PII"),
+    "output_filter": (AMBER_V,   "OUTPUT FILTER"),
+}
+
+# Same mapping but literal hex, for Plotly marker colors (Plotly renders its
+# own SVG and cannot resolve CSS custom properties).
+GUARDRAIL_COLOR_HEX: dict[str, str] = {
+    "injection": AMBER, "toxicity": ROSE, "jailbreak": PURPLE,
+    "pii": BLUE, "output_filter": AMBER,
 }
 
 # language → display label
@@ -63,9 +81,9 @@ LANG_LABEL = {"en": "English", "hi": "Hindi", "hinglish": "Hinglish", "unknown":
 def guardrail_style(blocked_by: str | None) -> tuple[str, str]:
     """Map a blocked_by value (possibly 'output_filter/toxic') to (color, label)."""
     if not blocked_by:
-        return (ROSE, "BLOCKED")
+        return (ROSE_V, "BLOCKED")
     base = blocked_by.split("/")[0]
-    color, label = GUARDRAIL_STYLE.get(base, (ROSE, base.upper()))
+    color, label = GUARDRAIL_STYLE.get(base, (ROSE_V, base.upper()))
     if "/" in blocked_by:
         sub = blocked_by.split("/", 1)[1].replace("_", " ").upper()
         label = f"{label} · {sub}"
@@ -75,134 +93,207 @@ def guardrail_style(blocked_by: str | None) -> tuple[str, str]:
 def severity_color(score: float) -> str:
     """Confidence-bar color: higher score = more severe."""
     if score >= 0.80:
-        return ROSE
+        return ROSE_V
     if score >= 0.60:
-        return AMBER
-    return BLUE
+        return AMBER_V
+    return BLUE_V
 
 
-BASE_CSS = f"""
+BASE_CSS = """
 <style>
+/* ---- theme variables ---- */
+:root {
+    /* light mode is the default */
+    --bg-primary: #f7f8fa;
+    --bg-primary-2: #ffffff;
+    --bg-sidebar: rgba(255, 255, 255, 0.85);
+    --bg-card: rgba(255, 255, 255, 0.85);
+    --bg-card-soft: rgba(255, 255, 255, 0.6);
+    --bg-card-strong: rgba(255, 255, 255, 0.92);
+    --bg-bubble: rgba(255, 255, 255, 0.92);
+    --bg-hover: rgba(0, 0, 0, 0.03);
+    --bg-track: rgba(0, 0, 0, 0.08);
+    --bg-card-border: rgba(0, 0, 0, 0.08);
+    --bg-card-border-strong: rgba(0, 0, 0, 0.14);
+
+    --text-primary: #1a1a2e;
+    --text-strong: #334155;
+    --text-body: #1e293b;
+    --text-secondary: #4a5568;
+    --text-muted: #64748b;
+    --text-footer: #94a3b8;
+
+    --accent-blue: #2563eb;
+    --accent-blue-deep: #1e40af;
+    --accent-blue-soft: #1d4ed8;
+    --accent-amber: #d97706;
+    --accent-emerald: #059669;
+    --accent-emerald-soft: #047857;
+    --accent-rose: #dc2626;
+    --accent-purple: #7c3aed;
+
+    --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+    --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.06);
+    --shadow-strong: 0 4px 24px rgba(0, 0, 0, 0.10);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* dark mode — current values, look is unchanged */
+        --bg-primary: #0a0a0f;
+        --bg-primary-2: #14142a;
+        --bg-sidebar: rgba(12, 12, 22, 0.92);
+        --bg-card: rgba(20, 20, 35, 0.85);
+        --bg-card-soft: rgba(20, 20, 35, 0.6);
+        --bg-card-strong: rgba(20, 20, 35, 0.9);
+        --bg-bubble: rgba(30, 30, 48, 0.85);
+        --bg-hover: rgba(255, 255, 255, 0.03);
+        --bg-track: rgba(255, 255, 255, 0.07);
+        --bg-card-border: rgba(255, 255, 255, 0.06);
+        --bg-card-border-strong: rgba(255, 255, 255, 0.10);
+
+        --text-primary: #f9fafb;
+        --text-strong: #d1d5db;
+        --text-body: #e5e7eb;
+        --text-secondary: #94a3b8;
+        --text-muted: #6b7280;
+        --text-footer: #4b5563;
+
+        --accent-blue: #3b82f6;
+        --accent-blue-deep: #2563eb;
+        --accent-blue-soft: #93c5fd;
+        --accent-amber: #f59e0b;
+        --accent-emerald: #10b981;
+        --accent-emerald-soft: #a7f3d0;
+        --accent-rose: #ef4444;
+        --accent-purple: #a855f7;
+
+        --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+        --shadow-soft: 0 4px 24px rgba(0, 0, 0, 0.25);
+        --shadow-strong: 0 4px 24px rgba(0, 0, 0, 0.35);
+    }
+}
+
 /* ---- hide Streamlit chrome ---- */
-#MainMenu {{ visibility: hidden; }}
-footer    {{ visibility: hidden; }}
-header    {{ visibility: hidden; }}
-[data-testid="stStatusWidget"] {{ display: none; }}
+#MainMenu { visibility: hidden; }
+footer    { visibility: hidden; }
+header    { visibility: hidden; }
+[data-testid="stStatusWidget"] { display: none; }
 
 /* ---- global font + page background ---- */
-html, body, [class*="css"] {{
+html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-}}
-.stApp {{
-    background: radial-gradient(1200px 600px at 50% -10%, #14142a 0%, #0a0a0f 55%) fixed;
-    color: #e5e7eb;
-}}
+}
+.stApp {
+    background: radial-gradient(1200px 600px at 50% -10%, var(--bg-primary-2) 0%, var(--bg-primary) 55%) fixed;
+    color: var(--text-body);
+}
 
 /* ---- sidebar ---- */
-[data-testid="stSidebar"] {{
-    background: rgba(12, 12, 22, 0.92);
-    border-right: 1px solid rgba(255,255,255,0.06);
-}}
-[data-testid="stSidebar"] * {{ color: #d1d5db; }}
-[data-testid="stSidebar"] .sidebar-logo {{
+[data-testid="stSidebar"] {
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--bg-card-border);
+}
+[data-testid="stSidebar"] * { color: var(--text-strong); }
+[data-testid="stSidebar"] .sidebar-logo {
     font-size: 1.15rem; font-weight: 700; letter-spacing: 0.01em;
-    color: #f9fafb; padding: 0.2rem 0 1rem 0;
-}}
+    color: var(--text-primary); padding: 0.2rem 0 1rem 0;
+}
 
 /* ---- radio nav in sidebar ---- */
-[data-testid="stSidebar"] [role="radiogroup"] label {{
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
+[data-testid="stSidebar"] [role="radiogroup"] label {
+    background: var(--bg-hover);
+    border: 1px solid var(--bg-card-border);
     border-radius: 10px;
     padding: 0.55rem 0.8rem;
     margin-bottom: 0.4rem;
     transition: all 0.15s ease;
-}}
-[data-testid="stSidebar"] [role="radiogroup"] label:hover {{
-    background: rgba(59,130,246,0.12);
-    border-color: rgba(59,130,246,0.4);
-}}
+}
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {
+    background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent-blue) 40%, transparent);
+}
 
 /* ---- generic card surface (glassmorphism) ---- */
-.glass {{
-    background: rgba(20, 20, 35, 0.85);
+.glass {
+    background: var(--bg-card);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid var(--bg-card-border);
     border-radius: 12px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.3);
-}}
+    box-shadow: var(--shadow);
+}
 
 /* ---- headings / text default ---- */
-h1, h2, h3, h4, p, span, label, div {{ color: #e5e7eb; }}
+h1, h2, h3, h4, p, span, label, div { color: var(--text-body); }
 
 /* ---- expander: subtle glass ---- */
-[data-testid="stExpander"] {{
-    background: rgba(20,20,35,0.6) !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
+[data-testid="stExpander"] {
+    background: var(--bg-card-soft) !important;
+    border: 1px solid var(--bg-card-border) !important;
     border-radius: 10px !important;
     box-shadow: none !important;
-}}
-[data-testid="stExpander"] summary {{
+}
+[data-testid="stExpander"] summary {
     font-size: 0.8rem !important;
-    color: #9ca3af !important;
+    color: var(--text-secondary) !important;
     font-weight: 500 !important;
-}}
-[data-testid="stExpander"] summary:hover {{ color: #d1d5db !important; }}
+}
+[data-testid="stExpander"] summary:hover { color: var(--text-strong) !important; }
 
 /* ---- chat input: rounded glass ---- */
-[data-testid="stChatInput"] {{
-    background: rgba(20,20,35,0.9);
+[data-testid="stChatInput"] {
+    background: var(--bg-card-strong);
     border-radius: 16px;
-    border: 1px solid rgba(255,255,255,0.10);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.35);
-}}
-[data-testid="stChatInput"] textarea {{
-    color: #f3f4f6 !important;
+    border: 1px solid var(--bg-card-border-strong);
+    box-shadow: var(--shadow-strong);
+}
+[data-testid="stChatInput"] textarea {
+    color: var(--text-body) !important;
     background: transparent !important;
-}}
-[data-testid="stChatInput"] textarea::placeholder {{ color: #6b7280 !important; }}
+}
+[data-testid="stChatInput"] textarea::placeholder { color: var(--text-muted) !important; }
 
 /* ---- chat message bubbles ---- */
-[data-testid="stChatMessage"] {{
+[data-testid="stChatMessage"] {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
     padding: 0.15rem 0 !important;
-}}
-[data-testid^="stChatMessageAvatar"] {{ display: none !important; }}
-[data-testid="stChatMessageContent"] p {{ color: #e8eaed; }}
+}
+[data-testid^="stChatMessageAvatar"] { display: none !important; }
+[data-testid="stChatMessageContent"] p { color: var(--text-body); }
 
 /* assistant bubble */
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageContent"]) [data-testid="stChatMessageContent"] {{
-    background: rgba(30, 30, 48, 0.85);
-    border: 1px solid rgba(255,255,255,0.06);
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageContent"]) [data-testid="stChatMessageContent"] {
+    background: var(--bg-bubble);
+    border: 1px solid var(--bg-card-border);
     border-radius: 20px 20px 20px 6px;
     padding: 0.7rem 1.05rem;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.25);
-}}
-/* user bubble (right-aligned, blue) */
+    box-shadow: var(--shadow-soft);
+}
+/* user bubble (right-aligned, blue) — always white-on-blue regardless of theme */
 .stChatMessage.st-user [data-testid="stChatMessageContent"],
-[class*="stChatMessage"]:has([data-testid="stChatMessageAvatar-user"]) [data-testid="stChatMessageContent"] {{
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+[class*="stChatMessage"]:has([data-testid="stChatMessageAvatar-user"]) [data-testid="stChatMessageContent"] {
+    background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-blue-deep) 100%) !important;
     border-radius: 20px 20px 6px 20px !important;
     margin-left: auto;
-}}
-[data-testid="stChatMessageAvatar-user"] ~ [data-testid="stChatMessageContent"] p {{ color: #ffffff; }}
+}
+[data-testid="stChatMessageAvatar-user"] ~ [data-testid="stChatMessageContent"] p { color: #ffffff; }
 
 /* ---- download button ---- */
-[data-testid="stDownloadButton"] button {{
-    background: rgba(59,130,246,0.15);
-    border: 1px solid rgba(59,130,246,0.5);
-    color: #93c5fd;
+[data-testid="stDownloadButton"] button {
+    background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 50%, transparent);
+    color: var(--accent-blue-soft);
     border-radius: 10px;
     font-weight: 600;
-}}
-[data-testid="stDownloadButton"] button:hover {{
-    background: rgba(59,130,246,0.28);
-    border-color: {BLUE};
-    color: #fff;
-}}
+}
+[data-testid="stDownloadButton"] button:hover {
+    background: color-mix(in srgb, var(--accent-blue) 28%, transparent);
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+}
 </style>
 """
 st.markdown(BASE_CSS, unsafe_allow_html=True)
@@ -235,8 +326,10 @@ def active_guardrail_count(cfg: PipelineConfig) -> int:
 
 def badge(text: str, color: str) -> str:
     return (
-        f"<span style='display:inline-block;background:{color}22;color:{color};"
-        f"border:1px solid {color}55;border-radius:999px;padding:2px 10px;"
+        f"<span style='display:inline-block;"
+        f"background:color-mix(in srgb, {color} 13%, transparent);color:{color};"
+        f"border:1px solid color-mix(in srgb, {color} 33%, transparent);"
+        f"border-radius:999px;padding:2px 10px;"
         f"font-size:0.7rem;font-weight:700;letter-spacing:0.04em;'>{html.escape(text)}</span>"
     )
 
@@ -272,23 +365,23 @@ def render_blocked_card(result: dict) -> None:
     card = f"""
     <div class="glass" style="border-left:4px solid {color};padding:1.1rem 1.25rem;margin:0.35rem 0;">
       <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.55rem;">
-        <span style="font-size:1.25rem;filter:drop-shadow(0 0 6px {color}88);">🛡️</span>
-        <span style="font-size:1.02rem;font-weight:700;color:#f9fafb;">Message Blocked</span>
+        <span style="font-size:1.25rem;filter:drop-shadow(0 0 6px color-mix(in srgb, {color} 53%, transparent));">🛡️</span>
+        <span style="font-size:1.02rem;font-weight:700;color:var(--text-primary);">Message Blocked</span>
         <span style="margin-left:auto;">{badge(label, color)}</span>
       </div>
-      <div style="color:#cbd5e1;font-size:0.9rem;line-height:1.6;margin-bottom:0.8rem;">
+      <div style="color:var(--text-body);font-size:0.9rem;line-height:1.6;margin-bottom:0.8rem;">
         {html.escape(reason)}
       </div>
       <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
-        <span style="font-size:0.72rem;color:#94a3b8;min-width:78px;">Confidence</span>
-        <div style="flex:1;height:8px;background:rgba(255,255,255,0.07);border-radius:999px;overflow:hidden;">
+        <span style="font-size:0.72rem;color:var(--text-secondary);min-width:78px;">Confidence</span>
+        <div style="flex:1;height:8px;background:var(--bg-track);border-radius:999px;overflow:hidden;">
           <div style="width:{score*100:.0f}%;height:100%;background:{bar_color};
-               box-shadow:0 0 10px {bar_color}99;border-radius:999px;"></div>
+               box-shadow:0 0 10px color-mix(in srgb, {bar_color} 60%, transparent);border-radius:999px;"></div>
         </div>
         <span style="font-size:0.78rem;font-weight:700;color:{bar_color};min-width:42px;text-align:right;">{score:.2f}</span>
       </div>
       <div style="margin-top:0.6rem;">
-        {badge("LANG · " + LANG_LABEL.get(lang, lang).upper(), BLUE)}
+        {badge("LANG · " + LANG_LABEL.get(lang, lang).upper(), BLUE_V)}
       </div>
     </div>
     """
@@ -302,22 +395,22 @@ def render_guardrail_trace(results: list[dict], title: str) -> None:
     rows = ""
     for r in results:
         fired = r.get("triggered", False)
-        dot = EMERALD if not fired else ROSE
+        dot = EMERALD_V if not fired else ROSE_V
         state = "fired" if fired else "clear"
         rows += (
             f"<tr>"
-            f"<td style='padding:5px 10px;color:#e5e7eb;'>{html.escape(str(r.get('name','')))}</td>"
+            f"<td style='padding:5px 10px;color:var(--text-body);'>{html.escape(str(r.get('name','')))}</td>"
             f"<td style='padding:5px 10px;'><span style='color:{dot};font-weight:600;'>● {state}</span></td>"
-            f"<td style='padding:5px 10px;color:#cbd5e1;text-align:right;'>{r.get('score',0):.3f}</td>"
-            f"<td style='padding:5px 10px;color:#94a3b8;text-align:right;'>{r.get('elapsed_ms',0):.1f} ms</td>"
-            f"<td style='padding:5px 10px;color:#94a3b8;'>{html.escape(str(r.get('reason','') or '')[:70])}</td>"
+            f"<td style='padding:5px 10px;color:var(--text-body);text-align:right;'>{r.get('score',0):.3f}</td>"
+            f"<td style='padding:5px 10px;color:var(--text-secondary);text-align:right;'>{r.get('elapsed_ms',0):.1f} ms</td>"
+            f"<td style='padding:5px 10px;color:var(--text-secondary);'>{html.escape(str(r.get('reason','') or '')[:70])}</td>"
             f"</tr>"
         )
     st.markdown(
-        f"<div style='font-size:0.72rem;color:#94a3b8;text-transform:uppercase;"
+        f"<div style='font-size:0.72rem;color:var(--text-secondary);text-transform:uppercase;"
         f"letter-spacing:0.06em;margin:0.4rem 0 0.25rem;'>{html.escape(title)}</div>"
         f"<table style='width:100%;border-collapse:collapse;font-size:0.8rem;'>"
-        f"<thead><tr style='color:#6b7280;font-size:0.68rem;text-transform:uppercase;'>"
+        f"<thead><tr style='color:var(--text-muted);font-size:0.68rem;text-transform:uppercase;'>"
         f"<th style='text-align:left;padding:0 10px;'>Guardrail</th>"
         f"<th style='text-align:left;padding:0 10px;'>State</th>"
         f"<th style='text-align:right;padding:0 10px;'>Score</th>"
@@ -328,10 +421,14 @@ def render_guardrail_trace(results: list[dict], title: str) -> None:
     )
 
 
+# Plotly renders its own SVG/canvas and cannot resolve CSS custom
+# properties, so its text uses a neutral grey that stays legible against
+# both the dark and light page background (the transparent paper/plot bg
+# lets the underlying page show through).
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(color="#e5e7eb", family="-apple-system, Segoe UI, sans-serif"),
+    font=dict(color="#4a5568", family="-apple-system, Segoe UI, sans-serif"),
     margin=dict(l=10, r=10, t=30, b=10),
 )
 
@@ -349,22 +446,22 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-    st.markdown("<hr style='border-color:rgba(255,255,255,0.06);margin:1rem 0;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:var(--bg-card-border);margin:1rem 0;'>", unsafe_allow_html=True)
 
     cfg = PipelineConfig()
     st.markdown(
         "<div style='font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;"
-        "color:#6b7280;margin-bottom:0.5rem;'>System Info</div>"
-        f"<div style='font-size:0.8rem;line-height:1.9;color:#9ca3af;'>"
-        f"<b style='color:#d1d5db;'>LLM</b> · {html.escape(OLLAMA_MODEL)}<br>"
-        f"<b style='color:#d1d5db;'>Active guardrails</b> · {active_guardrail_count(cfg)}<br>"
-        f"<b style='color:#d1d5db;'>Database</b> · {html.escape(DB_PATH)}"
+        "color:var(--text-muted);margin-bottom:0.5rem;'>System Info</div>"
+        f"<div style='font-size:0.8rem;line-height:1.9;color:var(--text-secondary);'>"
+        f"<b style='color:var(--text-strong);'>LLM</b> · {html.escape(OLLAMA_MODEL)}<br>"
+        f"<b style='color:var(--text-strong);'>Active guardrails</b> · {active_guardrail_count(cfg)}<br>"
+        f"<b style='color:var(--text-strong);'>Database</b> · {html.escape(DB_PATH)}"
         "</div>",
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        "<div style='position:fixed;bottom:1rem;font-size:0.68rem;color:#4b5563;'>"
+        "<div style='position:fixed;bottom:1rem;font-size:0.68rem;color:var(--text-footer);'>"
         "Team · Khandagale Parth Nandkumar · Darshan S · Shaurya Sharma"
         "</div>",
         unsafe_allow_html=True,
@@ -392,11 +489,11 @@ def render_chat_page() -> None:
         f"""
         <div class="glass" style="display:flex;align-items:center;padding:0.7rem 1.1rem;
              margin-bottom:1.1rem;">
-          <span style="font-weight:700;font-size:1.02rem;color:#f9fafb;">Hinglish Guardrails</span>
+          <span style="font-weight:700;font-size:1.02rem;color:var(--text-primary);">Hinglish Guardrails</span>
           <span style="margin-left:auto;display:flex;align-items:center;gap:0.45rem;
-               font-size:0.78rem;color:#a7f3d0;">
-            <span style="width:9px;height:9px;border-radius:50%;background:{EMERALD};
-                 box-shadow:0 0 8px {EMERALD};display:inline-block;
+               font-size:0.78rem;color:var(--accent-emerald-soft);">
+            <span style="width:9px;height:9px;border-radius:50%;background:{EMERALD_V};
+                 box-shadow:0 0 8px {EMERALD_V};display:inline-block;
                  animation:pulse 2s infinite;"></span>
             Shield active
           </span>
@@ -429,7 +526,7 @@ def render_chat_page() -> None:
                 if trace:
                     with st.expander("🛡️ Guardrail trace", expanded=False):
                         st.markdown(
-                            f"<span style='font-size:0.75rem;color:#94a3b8;'>"
+                            f"<span style='font-size:0.75rem;color:var(--text-secondary);'>"
                             f"language <b>{LANG_LABEL.get(trace.get('language',''), trace.get('language',''))}</b> · "
                             f"latency <b>{trace.get('total_ms','?')} ms</b></span>",
                             unsafe_allow_html=True,
@@ -468,7 +565,7 @@ def render_chat_page() -> None:
                 st.write(result["response"])
                 with st.expander("🛡️ Guardrail trace", expanded=False):
                     st.markdown(
-                        f"<span style='font-size:0.75rem;color:#94a3b8;'>"
+                        f"<span style='font-size:0.75rem;color:var(--text-secondary);'>"
                         f"language <b>{LANG_LABEL.get(result['language'], result['language'])}</b> · "
                         f"latency <b>{result['total_ms']} ms</b></span>",
                         unsafe_allow_html=True,
@@ -490,12 +587,12 @@ def render_chat_page() -> None:
 def metric_card(label: str, value: str, sub: str, accent: str, icon: str) -> str:
     return f"""
     <div class="glass" style="padding:1.15rem 1.3rem;height:100%;">
-      <div style="display:flex;align-items:center;gap:0.5rem;color:#94a3b8;font-size:0.78rem;">
+      <div style="display:flex;align-items:center;gap:0.5rem;color:var(--text-secondary);font-size:0.78rem;">
         <span style="font-size:1rem;">{icon}</span>{html.escape(label)}
       </div>
       <div style="font-size:2.05rem;font-weight:800;color:{accent};margin-top:0.35rem;
            line-height:1.1;">{value}</div>
-      <div style="font-size:0.74rem;color:#6b7280;margin-top:0.15rem;">{html.escape(sub)}</div>
+      <div style="font-size:0.74rem;color:var(--text-muted);margin-top:0.15rem;">{html.escape(sub)}</div>
     </div>
     """
 
@@ -531,7 +628,7 @@ def render_dashboard_page() -> None:
 
     st.markdown(
         f"<h2 style='margin-bottom:0.1rem;'>Monitoring Dashboard</h2>"
-        f"<div style='color:#94a3b8;font-size:0.85rem;margin-bottom:1.2rem;'>"
+        f"<div style='color:var(--text-secondary);font-size:0.85rem;margin-bottom:1.2rem;'>"
         f"{total} total events · {html.escape(range_txt)}</div>",
         unsafe_allow_html=True,
     )
@@ -544,10 +641,10 @@ def render_dashboard_page() -> None:
     alw_pct = (allowed / total * 100) if total else 0.0
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(metric_card("Total Messages", f"{total}", "all-time", BLUE, "💬"), unsafe_allow_html=True)
-    m2.markdown(metric_card("Blocked", f"{blocked}", f"{blk_pct:.1f}% of traffic", ROSE, "🚫"), unsafe_allow_html=True)
-    m3.markdown(metric_card("Allowed", f"{allowed}", f"{alw_pct:.1f}% of traffic", EMERALD, "✅"), unsafe_allow_html=True)
-    m4.markdown(metric_card("Avg Latency", f"{avg_ms:.0f} ms", "per message", BLUE, "⚡"), unsafe_allow_html=True)
+    m1.markdown(metric_card("Total Messages", f"{total}", "all-time", BLUE_V, "💬"), unsafe_allow_html=True)
+    m2.markdown(metric_card("Blocked", f"{blocked}", f"{blk_pct:.1f}% of traffic", ROSE_V, "🚫"), unsafe_allow_html=True)
+    m3.markdown(metric_card("Allowed", f"{allowed}", f"{alw_pct:.1f}% of traffic", EMERALD_V, "✅"), unsafe_allow_html=True)
+    m4.markdown(metric_card("Avg Latency", f"{avg_ms:.0f} ms", "per message", BLUE_V, "⚡"), unsafe_allow_html=True)
 
     st.markdown("<div style='height:1.3rem;'></div>", unsafe_allow_html=True)
 
@@ -560,7 +657,7 @@ def render_dashboard_page() -> None:
         if norm_guardrail:
             labels = list(norm_guardrail.keys())
             values = list(norm_guardrail.values())
-            colors = [GUARDRAIL_STYLE.get(l, (BLUE, l))[0] for l in labels]
+            colors = [GUARDRAIL_COLOR_HEX.get(l, BLUE) for l in labels]
             fig = go.Figure(go.Pie(
                 labels=[GUARDRAIL_STYLE.get(l, (BLUE, l.upper()))[1] for l in labels],
                 values=values, hole=0.62,
@@ -585,7 +682,7 @@ def render_dashboard_page() -> None:
             fig = go.Figure(go.Bar(
                 x=counts, y=names, orientation="h",
                 marker=dict(color=grad[:len(order)]),
-                text=counts, textposition="outside", textfont=dict(color="#e5e7eb"),
+                text=counts, textposition="outside", textfont=dict(color="#4a5568"),
             ))
             fig.update_layout(**PLOTLY_LAYOUT, height=300,
                               xaxis=dict(gridcolor="rgba(255,255,255,0.06)"),
@@ -601,11 +698,11 @@ def render_dashboard_page() -> None:
     if norm_guardrail:
         labels = list(norm_guardrail.keys())
         values = list(norm_guardrail.values())
-        colors = [GUARDRAIL_STYLE.get(l, (BLUE, l))[0] for l in labels]
+        colors = [GUARDRAIL_COLOR_HEX.get(l, BLUE) for l in labels]
         names = [GUARDRAIL_STYLE.get(l, (BLUE, l.upper()))[1] for l in labels]
         fig = go.Figure(go.Bar(
             x=names, y=values, marker=dict(color=colors),
-            text=values, textposition="outside", textfont=dict(color="#e5e7eb"),
+            text=values, textposition="outside", textfont=dict(color="#4a5568"),
         ))
         fig.update_layout(**PLOTLY_LAYOUT, height=300,
                           xaxis=dict(gridcolor="rgba(255,255,255,0.0)"),
@@ -624,28 +721,28 @@ def render_dashboard_page() -> None:
         for ev in recent:
             action = ev.get("final_action") or "?"
             if action == "blocked":
-                a_badge = badge("Blocked", ROSE)
+                a_badge = badge("Blocked", ROSE_V)
             else:
-                a_badge = badge("Allowed", EMERALD)
+                a_badge = badge("Allowed", EMERALD_V)
             lang = LANG_LABEL.get(ev.get("language", ""), ev.get("language", "") or "?")
             blk = ev.get("blocked_by") or "—"
             preview = html.escape((ev.get("user_input") or "").replace("\n", " ")[:50])
             ms = ev.get("total_ms")
             ms_txt = f"{ms:.0f} ms" if isinstance(ms, (int, float)) else "—"
             body += (
-                f"<tr style='border-top:1px solid rgba(255,255,255,0.05);'>"
-                f"<td style='padding:8px 10px;color:#6b7280;'>{ev.get('id','')}</td>"
-                f"<td style='padding:8px 10px;color:#cbd5e1;'>{html.escape(str(lang))}</td>"
+                f"<tr style='border-top:1px solid var(--bg-card-border);'>"
+                f"<td style='padding:8px 10px;color:var(--text-muted);'>{ev.get('id','')}</td>"
+                f"<td style='padding:8px 10px;color:var(--text-body);'>{html.escape(str(lang))}</td>"
                 f"<td style='padding:8px 10px;'>{a_badge}</td>"
-                f"<td style='padding:8px 10px;color:#f59e0b;'>{html.escape(str(blk))}</td>"
-                f"<td style='padding:8px 10px;color:#9ca3af;'>{preview}</td>"
-                f"<td style='padding:8px 10px;color:#94a3b8;text-align:right;'>{ms_txt}</td>"
+                f"<td style='padding:8px 10px;color:{AMBER_V};'>{html.escape(str(blk))}</td>"
+                f"<td style='padding:8px 10px;color:var(--text-secondary);'>{preview}</td>"
+                f"<td style='padding:8px 10px;color:var(--text-secondary);text-align:right;'>{ms_txt}</td>"
                 f"</tr>"
             )
         st.markdown(
             "<div class='glass' style='padding:0.4rem 0.6rem;overflow-x:auto;'>"
             "<table style='width:100%;border-collapse:collapse;font-size:0.82rem;'>"
-            "<thead><tr style='color:#6b7280;font-size:0.68rem;text-transform:uppercase;"
+            "<thead><tr style='color:var(--text-muted);font-size:0.68rem;text-transform:uppercase;"
             "letter-spacing:0.05em;'>"
             "<th style='text-align:left;padding:6px 10px;'>ID</th>"
             "<th style='text-align:left;padding:6px 10px;'>Language</th>"
