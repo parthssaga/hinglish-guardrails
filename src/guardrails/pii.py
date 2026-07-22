@@ -44,9 +44,14 @@ CAP_SEQUENCE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
 
 # Explicit name-introduction cues. A capitalised token right after one of
 # these is very likely an actual name even if it is a single word.
+#
+# The cue itself is matched case-insensitively via a scoped (?i:...) group,
+# but the captured name stays case-SENSITIVE: it must be a genuinely
+# capitalised token. Without this, a global re.IGNORECASE let [A-Z][a-z]+
+# match ordinary lowercase words, so "I'm doing well" redacted "doing" as a
+# name. Requiring a real capital fixes that whole class of false positives.
 NAME_CUE = re.compile(
-    r"\b(?:my name is|i am|i'm|this is|mera naam|naam hai|call me)\s+([A-Z][a-z]+)",
-    re.IGNORECASE,
+    r"(?i:\b(?:my name is|i am|i'm|this is|mera naam|naam hai|call me))\s+([A-Z][a-z]+)"
 )
 
 

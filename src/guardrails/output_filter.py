@@ -178,6 +178,7 @@ class OutputFilterGuardrail(BaseGuardrail):
     def __init__(self, config: Any) -> None:
         super().__init__(config)
         self._clf = None
+        self._clf_has_head = False
         self._device = "cpu"
         # Shared PII guardrail instance — reuses IndicNER if loaded; otherwise
         # falls back to the regex layer.  Loaded lazily alongside this guardrail.
@@ -201,8 +202,19 @@ class OutputFilterGuardrail(BaseGuardrail):
                 truncation=True,
                 max_length=512,
             )
+            # Only trust the neural score when the checkpoint carries a real
+            # fine-tuned classification head. A base model (e.g.
+            # distilbert-base-multilingual-cased) gets a randomly-initialised
+            # head labelled LABEL_0/LABEL_1 and emits ~0.5 on ALL text —
+            # noise that, once inverted via `1.0 - raw`, can spuriously flag
+            # benign responses. Same guard as ToxicityGuardrail/JailbreakGuardrail.
+            labels = list(self._clf.model.config.id2label.values())
+            self._clf_has_head = not all(
+                str(l).startswith("LABEL_") for l in labels
+            )
         except Exception:
             self._clf = None
+            self._clf_has_head = False
 
         # PII guardrail (pii_in_output category)
         if getattr(self.config, "output_filter_pii_in_output", True):
@@ -218,9 +230,14 @@ class OutputFilterGuardrail(BaseGuardrail):
     # ------------------------------------------------------------------
 
     def _score_toxic(self, text: str) -> float:
-        """Neural toxicity (DistilBERT multilingual) with wordlist fallback."""
+        """Neural toxicity (DistilBERT multilingual) with wordlist fallback.
+
+        The neural path is used only when the classifier has a genuine
+        fine-tuned head (``_clf_has_head``); otherwise we rely on the
+        wordlist so an un-fine-tuned base model can't emit ~0.5 noise.
+        """
         neural = 0.0
-        if self._clf is not None:
+        if self._clf is not None and self._clf_has_head:
             try:
                 out = self._clf(text)[0]
                 label = str(out.get("label", "")).upper()
@@ -290,13 +307,35 @@ class OutputFilterGuardrail(BaseGuardrail):
             return 0.35
         return 0.0
 
+    # Structured PII entity types that genuinely warrant blocking a response.
+    # A bare person NAME is deliberately excluded: benign factual answers
+    # routinely name public figures ("the President is Droupadi Murmu"), and
+    # blocking those breaks normal Q&A. The real leak we guard against is
+    # structured personal data — emails, phones, Aadhaar, PAN, cards.
+    _STRUCTURED_PII: frozenset[str] = frozenset(
+        {"EMAIL", "PHONE", "AADHAAR", "PAN", "CARD"}
+    )
+
     def _score_pii_in_output(self, text: str) -> float:
-        """Reuse PIIGuardrail to detect personal data in the model's response."""
+        """Reuse PIIGuardrail to detect *structured* personal data in output.
+
+        Names alone do not fire — see ``_STRUCTURED_PII``. This keeps factual
+        answers that mention people from being blocked while still catching a
+        model that echoes back an email / phone / Aadhaar / PAN / card number.
+        """
         if not self._pii._ready:
             return 0.0
         try:
             result = self._pii.check(text)
-            return float(result.score) if result.triggered else 0.0
+            if not result.triggered:
+                return 0.0
+            structured = [
+                e for e in result.metadata.get("entities", [])
+                if e in self._STRUCTURED_PII
+            ]
+            if not structured:
+                return 0.0
+            return min(1.0, 0.5 + 0.1 * len(structured))
         except Exception:
             return 0.0
 
