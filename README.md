@@ -20,7 +20,7 @@ A production-ready safety guardrail pipeline for LLM chatbots that handles
 | **Six-layer safety pipeline** | PII redaction → toxicity → injection → jailbreak → output filter → hallucination |
 | **Dual benchmark suite** | 900-prompt input benchmark + 750-item output benchmark across 3 languages |
 | **REST API** | FastAPI service (`POST /check`, `POST /chat`, `GET /stats`, `GET /health`) |
-| **Streamlit UI** | Dark-mode chat interface with glassmorphism design and live monitoring dashboard |
+| **Streamlit UI** | Theme-responsive chat interface (polished light & dark modes) with glassmorphism design and live monitoring dashboard |
 | **Dockerized** | Single `docker run` to start the full app |
 | **CI / CD** | GitHub Actions runs pytest + benchmark on every push |
 | **Fine-tuned transformer** | MuRIL fine-tuning pipeline for Hinglish toxicity/jailbreak (end-to-end, 3-class) |
