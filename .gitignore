@@ -13,6 +13,9 @@ venv/
 # os
 .DS_Store
 
+# claude code local session config
+.claude/
+
 # fine-tuned model checkpoints (too large for git; regenerate with training/finetune_muril.py)
 models/
 
